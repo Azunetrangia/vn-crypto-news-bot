@@ -1,0 +1,93 @@
+{
+  "messari": [],
+  "santiment": [],
+  "5phutcrypto": [
+    "https://5phutcrypto.io/ky-nguyen-ai-va-token-hoa-da-bat-dau/",
+    "https://5phutcrypto.io/he-sinh-thai-crypto-te-liet-chi-vi-aws/",
+    "https://5phutcrypto.io/fed-mo-cua-don-crypto/",
+    "https://5phutcrypto.io/quy-dau-tu-roi-bo-crypto/",
+    "https://5phutcrypto.io/strive-thau-tom-semler/"
+  ],
+  "economic_events": [
+    "investing_Germany_German_Factory_Orders_(MoM)__(_02:00",
+    "investing_Germany_HCOB_Germany_Composite_PMI__(O_03:55",
+    "investing_Germany_HCOB_Germany_Services_PMI__(Oc_03:55",
+    "investing_United_Kingdom_Car_Registration_(YoY)__(Oct)_04:00",
+    "investing_United_Kingdom_United_Kingdom_New_Passenger_C_04:00",
+    "investing_Euro_Zone_HCOB_Eurozone_Composite_PMI__(_04:00",
+    "investing_Euro_Zone_HCOB_Eurozone_Services_PMI__(O_04:00",
+    "investing_United_Kingdom_S&P_Global_Composite_PMI__(Oct_04:30",
+    "investing_United_Kingdom_S&P_Global_Services_PMI__(Oct)_04:30",
+    "investing_Euro_Zone_PPI_(MoM)__(Sep)_05:00",
+    "investing_Euro_Zone_PPI_(YoY)__(Sep)_05:00",
+    "investing_United_States_MBA_30-Year_Mortgage_Rate_07:00",
+    "investing_United_States_MBA_Mortgage_Applications_(WoW_07:00",
+    "investing_United_States_MBA_Purchase_Index_07:00",
+    "investing_United_States_Mortgage_Market_Index_07:00",
+    "investing_United_States_Mortgage_Refinance_Index_07:00",
+    "investing_United_States_ADP_Nonfarm_Employment_Change__08:15",
+    "investing_United_States_S&P_Global_Composite_PMI__(Oct_09:45",
+    "investing_United_States_S&P_Global_Services_PMI__(Oct)_09:45",
+    "investing_United_States_ISM_Non-Manufacturing_Business_10:00",
+    "investing_United_States_ISM_Non-Manufacturing_Employme_10:00",
+    "investing_United_States_ISM_Non-Manufacturing_New_Orde_10:00",
+    "investing_United_States_ISM_Non-Manufacturing_PMI__(Oc_10:00",
+    "investing_United_States_ISM_Non-Manufacturing_Prices___10:00",
+    "investing_United_States_Crude_Oil_Inventories_10:30",
+    "investing_United_States_EIA_Refinery_Crude_Runs__(WoW)_10:30",
+    "investing_United_States_Crude_Oil_Imports_10:30",
+    "investing_United_States_Cushing_Crude_Oil_Inventories_10:30",
+    "investing_United_States_Distillate_Fuel_Production_10:30",
+    "investing_United_States_EIA_Weekly_Distillates_Stocks_10:30",
+    "investing_United_States_Gasoline_Production_10:30",
+    "investing_United_States_Heating_Oil_Stockpiles_10:30",
+    "investing_United_States_EIA_Weekly_Refinery_Utilizatio_10:30",
+    "investing_United_States_Gasoline_Inventories_10:30"
+  ],
+  "rss": {
+    "https://vnexpress.net/rss/tin-moi-nhat.rss": [
+      "https://vnexpress.net/ong-putin-ra-lenh-chuan-bi-phuong-an-noi-lai-thu-hat-nhan-4960488.html",
+      "https://vnexpress.net/haaland-var-giup-do-toi-4960248.html",
+      "https://vnexpress.net/nam-dinh-mat-phat-den-truoc-clb-nhat-ban-o-c2-chau-a-4960498.html",
+      "https://vnexpress.net/be-sinh-non-nang-300-gram-song-sot-ky-dieu-4960484.html",
+      "https://vnexpress.net/can-danh-thue-cao-nguoi-thuong-xuyen-mua-ban-bat-dong-san-4960487.html",
+      "https://vnexpress.net/becamex-tp-hcm-2-1-hai-phong-4960506.html",
+      "https://vnexpress.net/nam-dinh-mat-oan-phat-den-o-cup-c2-chau-a-4960498.html"
+    ],
+    "https://feeds.bbci.co.uk/news/rss.xml": [
+      "https://www.bbc.com/news/articles/c0mx99ple17o#0",
+      "https://www.bbc.com/news/articles/c205z4963vyo#0",
+      "https://www.bbc.com/news/articles/cd04y81re4jo#0",
+      "https://www.bbc.com/news/articles/c5ypx57p447o#0",
+      "https://www.bbc.com/news/articles/cm2kyjrg77eo#0"
+    ],
+    "https://cointelegraph.com/rss": [
+      "https://cointelegraph.com/news/ripple-40b-valuation-citadel-fortress-investment",
+      "https://cointelegraph.com/news/ethereum-erases-2025-gains-is-eth-price-headed-to-2-2k-next",
+      "https://cointelegraph.com/news/bitcoin-price-rebound-stops-103k-30-percent-btc-supply-underwater",
+      "https://cointelegraph.com/news/three-things-that-must-happen-bitcoin-avoid-bear-market",
+      "https://cointelegraph.com/news/future-bitcoin-treasury-raises-34m-fulgur-tobam"
+    ],
+    "https://cointelegraph.com/rss/tag/blockchain": [
+      "https://cointelegraph.com/news/ripple-40b-valuation-citadel-fortress-investment",
+      "https://cointelegraph.com/news/future-bitcoin-treasury-raises-34m-fulgur-tobam",
+      "https://cointelegraph.com/news/how-token-burns-affect-price-and-when-they-don-t",
+      "https://cointelegraph.com/news/mev-is-a-choice-blockchains",
+      "https://cointelegraph.com/news/nfts-hit-the-brakes-market-cap-drops-46-in-30-days"
+    ],
+    "https://cointelegraph.com/rss/category/market-analysis": [
+      "https://cointelegraph.com/news/ethereum-erases-2025-gains-is-eth-price-headed-to-2-2k-next",
+      "https://cointelegraph.com/news/bitcoin-price-rebound-stops-103k-30-percent-btc-supply-underwater",
+      "https://cointelegraph.com/news/three-things-that-must-happen-bitcoin-avoid-bear-market",
+      "https://cointelegraph.com/news/bitcoin-price-21-dip-normal-buyers-accumulate-50k-btc-in-day",
+      "https://cointelegraph.com/news/bitcoin-bear-market-confirmed-watch-btc-price-levels-next"
+    ],
+    "https://decrypt.co/feed": [
+      "https://decrypt.co/?p=347410",
+      "https://decrypt.co/?p=347407",
+      "https://decrypt.co/?p=347391",
+      "https://decrypt.co/?p=347340",
+      "https://decrypt.co/?p=347386"
+    ]
+  }
+}

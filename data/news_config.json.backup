@@ -1,0 +1,36 @@
+{
+  "messari_channel": 1394159512293736479,
+  "santiment_channel": 1394159512293736479,
+  "rss_feeds": [
+    {
+      "name": "VNExress",
+      "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
+      "channel_id": 1394159512293736479
+    },
+    {
+      "name": "BBC News",
+      "url": "https://feeds.bbci.co.uk/news/rss.xml",
+      "channel_id": 1394159512293736479
+    },
+    {
+      "name": "Cointelegraph.com News",
+      "url": "https://cointelegraph.com/rss",
+      "channel_id": 1261675273171112056
+    },
+    {
+      "name": "Cointelegraph - Blockchain",
+      "url": "https://cointelegraph.com/rss/tag/blockchain",
+      "channel_id": 1261675273171112056
+    },
+    {
+      "name": "Cointelegraph - Market Analysis",
+      "url": "https://cointelegraph.com/rss/category/market-analysis",
+      "channel_id": 1261675273171112056
+    },
+    {
+      "name": "Decrypt",
+      "url": "https://decrypt.co/feed",
+      "channel_id": 1261675273171112056
+    }
+  ]
+}

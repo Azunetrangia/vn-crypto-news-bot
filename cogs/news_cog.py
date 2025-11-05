@@ -1,0 +1,1777 @@
+import discord
+from discord.ext import commands, tasks
+import aiohttp
+import feedparser
+import json
+import os
+import re
+from datetime import datetime, timedelta
+import asyncio
+from deep_translator import GoogleTranslator
+from bs4 import BeautifulSoup
+import pytz
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+class AddRSSModal(discord.ui.Modal, title="Thêm RSS Feed mới"):
+    """Modal để nhập thông tin RSS Feed"""
+    
+    url = discord.ui.TextInput(
+        label="URL của RSS Feed",
+        placeholder="https://example.com/rss.xml",
+        required=True,
+        style=discord.TextStyle.short
+    )
+    
+    name = discord.ui.TextInput(
+        label="Tên nguồn tin",
+        placeholder="Ví dụ: Tin Vĩ Mô ABC",
+        required=True,
+        max_length=100,
+        style=discord.TextStyle.short
+    )
+    
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+        
+    async def on_submit(self, interaction: discord.Interaction):
+        """Xử lý khi user submit Modal"""
+        # Lưu thông tin tạm để dùng sau khi chọn channel
+        self.cog.temp_rss_data[interaction.user.id] = {
+            'url': str(self.url),
+            'name': str(self.name)
+        }
+        
+        # Hiển thị ChannelSelect để chọn kênh
+        view = ChannelSelectView(self.cog, 'rss')
+        embed = discord.Embed(
+            title="📺 Chọn kênh đăng tin",
+            description=f"Chọn kênh để đăng tin từ nguồn **{self.name}**",
+            color=discord.Color.blue()
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=view)
+
+class ChannelSelectView(discord.ui.View):
+    """View chứa ChannelSelect để chọn kênh Discord"""
+    
+    def __init__(self, cog, source_type):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.source_type = source_type  # 'messari', 'santiment', '5phutcrypto', 'economic_calendar', hoặc 'rss'
+        
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        placeholder="Chọn một kênh...",
+        channel_types=[discord.ChannelType.text]
+    )
+    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        """Xử lý khi user chọn channel"""
+        channel = select.values[0]
+        
+        # Load config hiện tại
+        config = self.cog.load_news_config(interaction.guild_id)
+        
+        if self.source_type == 'messari':
+            config['messari_channel'] = channel.id
+            await interaction.response.edit_message(
+                content=f"✅ Đã cài đặt kênh tin Messari: {channel.mention}",
+                embed=None,
+                view=None
+            )
+            
+        elif self.source_type == 'santiment':
+            config['santiment_channel'] = channel.id
+            await interaction.response.edit_message(
+                content=f"✅ Đã cài đặt kênh tin Santiment: {channel.mention}",
+                embed=None,
+                view=None
+            )
+            
+        elif self.source_type == '5phutcrypto':
+            config['5phutcrypto_channel'] = channel.id
+            await interaction.response.edit_message(
+                content=f"✅ Đã cài đặt kênh tin 5 Phút Crypto: {channel.mention}",
+                embed=None,
+                view=None
+            )
+            
+        elif self.source_type == 'economic_calendar':
+            config['economic_calendar_channel'] = channel.id
+            await interaction.response.edit_message(
+                content=f"✅ Đã cài đặt kênh Economic Calendar: {channel.mention}",
+                embed=None,
+                view=None
+            )
+            
+        elif self.source_type == 'rss':
+            # Lấy thông tin RSS từ temp storage
+            rss_data = self.cog.temp_rss_data.get(interaction.user.id)
+            if not rss_data:
+                await interaction.response.edit_message(
+                    content="❌ Lỗi: Không tìm thấy thông tin RSS",
+                    embed=None,
+                    view=None
+                )
+                return
+                
+            # Thêm RSS feed vào config
+            config['rss_feeds'].append({
+                'name': rss_data['name'],
+                'url': rss_data['url'],
+                'channel_id': channel.id
+            })
+            
+            # Xóa temp data
+            del self.cog.temp_rss_data[interaction.user.id]
+            
+            await interaction.response.edit_message(
+                content=f"✅ Đã thêm RSS Feed **{rss_data['name']}** vào kênh {channel.mention}",
+                embed=None,
+                view=None
+            )
+        
+        # Lưu config
+        self.cog.save_news_config(config, interaction.guild_id)
+
+class RemoveRSSView(discord.ui.View):
+    """View để chọn RSS feed cần xóa"""
+    
+    def __init__(self, cog, rss_feeds):
+        super().__init__(timeout=60)
+        self.cog = cog
+        
+        # Tạo options cho select menu
+        options = []
+        for idx, feed in enumerate(rss_feeds):
+            options.append(
+                discord.SelectOption(
+                    label=feed['name'],
+                    description=feed['url'][:100],
+                    value=str(idx)
+                )
+            )
+        
+        # Thêm select vào view
+        select = discord.ui.Select(
+            placeholder="Chọn RSS feed để xóa...",
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+        
+    async def select_callback(self, interaction: discord.Interaction):
+        """Xử lý khi user chọn RSS để xóa"""
+        selected_idx = int(interaction.data['values'][0])
+        
+        # Load config
+        config = self.cog.load_news_config(interaction.guild_id)
+        
+        # Lấy tên feed trước khi xóa
+        feed_name = config['rss_feeds'][selected_idx]['name']
+        
+        # Xóa feed
+        del config['rss_feeds'][selected_idx]
+        
+        # Lưu config
+        self.cog.save_news_config(config, interaction.guild_id)
+        
+        await interaction.response.edit_message(
+            content=f"✅ Đã xóa RSS Feed: **{feed_name}**",
+            embed=None,
+            view=None
+        )
+
+class QuickSetupView(discord.ui.View):
+    """View cho Quick Setup với các RSS feeds có sẵn"""
+    
+    def __init__(self, cog):
+        super().__init__(timeout=180)
+        self.cog = cog
+        
+    @discord.ui.button(label="Cài đặt Tất cả", style=discord.ButtonStyle.success, emoji="⚡")
+    async def setup_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Cài đặt tất cả RSS feeds vào channel hiện tại"""
+        await interaction.response.defer()
+        
+        # Lấy channel hiện tại
+        channel_id = interaction.channel_id
+        
+        # Danh sách RSS feeds có sẵn
+        preset_feeds = [
+            {
+                "name": "Tin mới nhất - VnExpress RSS",
+                "url": "https://vnexpress.net/rss/tin-moi-nhat.rss"
+            },
+            {
+                "name": "BBC News",
+                "url": "https://feeds.bbci.co.uk/news/rss.xml"
+            },
+            {
+                "name": "Cointelegraph.com News",
+                "url": "https://cointelegraph.com/rss"
+            },
+            {
+                "name": "Cointelegraph - Blockchain",
+                "url": "https://cointelegraph.com/rss/tag/blockchain"
+            },
+            {
+                "name": "Cointelegraph - Market Analysis",
+                "url": "https://cointelegraph.com/rss/category/market-analysis"
+            },
+            {
+                "name": "Decrypt",
+                "url": "https://decrypt.co/feed"
+            }
+        ]
+        
+        # Load config hiện tại
+        config = self.cog.load_news_config(interaction.guild_id)
+        
+        # Lấy danh sách URL đã có
+        existing_urls = {feed['url'] for feed in config['rss_feeds']}
+        
+        # Thêm các feed chưa có
+        added_count = 0
+        for feed in preset_feeds:
+            if feed['url'] not in existing_urls:
+                config['rss_feeds'].append({
+                    'name': feed['name'],
+                    'url': feed['url'],
+                    'channel_id': channel_id
+                })
+                added_count += 1
+        
+        # Lưu config
+        self.cog.save_news_config(config, interaction.guild_id)
+        
+        # Tạo embed kết quả
+        embed = discord.Embed(
+            title="⚡ Quick Setup Hoàn tất!",
+            description=f"Đã cài đặt **{added_count}** RSS feeds vào channel này.",
+            color=discord.Color.green()
+        )
+        
+        if added_count > 0:
+            feed_list = "\n".join([f"✅ {feed['name']}" for feed in preset_feeds if feed['url'] not in existing_urls])
+            embed.add_field(
+                name="📰 Feeds đã thêm:",
+                value=feed_list,
+                inline=False
+            )
+        
+        if added_count < len(preset_feeds):
+            embed.add_field(
+                name="ℹ️ Lưu ý:",
+                value=f"Đã bỏ qua {len(preset_feeds) - added_count} feed(s) đã tồn tại.",
+                inline=False
+            )
+        
+        embed.add_field(
+            name="⏰ Thông tin:",
+            value="Bot sẽ tự động đăng tin mới mỗi 5 phút.\nTin nước ngoài sẽ được dịch sang tiếng Việt.",
+            inline=False
+        )
+        
+        await interaction.followup.edit_message(
+            message_id=interaction.message.id,
+            embed=embed,
+            view=None
+        )
+    
+    @discord.ui.button(label="Chọn Từng Cái", style=discord.ButtonStyle.primary, emoji="📝")
+    async def select_individual_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Cho phép chọn từng RSS feed riêng lẻ"""
+        # Tạo SelectMenu với các RSS feeds
+        view = PresetRSSSelectView(self.cog)
+        
+        embed = discord.Embed(
+            title="📝 Chọn RSS Feeds",
+            description="Chọn các RSS feeds bạn muốn thêm (có thể chọn nhiều):",
+            color=discord.Color.blue()
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=view)
+    
+    @discord.ui.button(label="Hủy", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Hủy Quick Setup"""
+        await interaction.response.edit_message(
+            content="❌ Đã hủy Quick Setup.",
+            embed=None,
+            view=None
+        )
+
+class PresetRSSSelectView(discord.ui.View):
+    """View để chọn RSS feeds từ danh sách có sẵn"""
+    
+    def __init__(self, cog):
+        super().__init__(timeout=180)
+        self.cog = cog
+        
+        # Tạo SelectMenu
+        select = discord.ui.Select(
+            placeholder="Chọn các RSS feeds...",
+            min_values=1,
+            max_values=6,
+            options=[
+                discord.SelectOption(
+                    label="VnExpress - Tin mới nhất",
+                    description="https://vnexpress.net/rss/tin-moi-nhat.rss",
+                    emoji="🇻🇳",
+                    value="https://vnexpress.net/rss/tin-moi-nhat.rss"
+                ),
+                discord.SelectOption(
+                    label="BBC News",
+                    description="https://feeds.bbci.co.uk/news/rss.xml",
+                    emoji="🇬🇧",
+                    value="https://feeds.bbci.co.uk/news/rss.xml"
+                ),
+                discord.SelectOption(
+                    label="Cointelegraph - All News",
+                    description="https://cointelegraph.com/rss",
+                    emoji="₿",
+                    value="https://cointelegraph.com/rss"
+                ),
+                discord.SelectOption(
+                    label="Cointelegraph - Blockchain",
+                    description="https://cointelegraph.com/rss/tag/blockchain",
+                    emoji="⛓️",
+                    value="https://cointelegraph.com/rss/tag/blockchain"
+                ),
+                discord.SelectOption(
+                    label="Cointelegraph - Market Analysis",
+                    description="https://cointelegraph.com/rss/category/market-analysis",
+                    emoji="📊",
+                    value="https://cointelegraph.com/rss/category/market-analysis"
+                ),
+                discord.SelectOption(
+                    label="Decrypt",
+                    description="https://decrypt.co/feed",
+                    emoji="🔐",
+                    value="https://decrypt.co/feed"
+                )
+            ]
+        )
+        
+        select.callback = self.select_callback
+        self.add_item(select)
+    
+    async def select_callback(self, interaction: discord.Interaction):
+        """Xử lý khi user chọn các RSS feeds"""
+        selected_urls = interaction.data['values']
+        channel_id = interaction.channel_id
+        
+        # Map URL to name
+        url_to_name = {
+            "https://vnexpress.net/rss/tin-moi-nhat.rss": "Tin mới nhất - VnExpress RSS",
+            "https://feeds.bbci.co.uk/news/rss.xml": "BBC News",
+            "https://cointelegraph.com/rss": "Cointelegraph.com News",
+            "https://cointelegraph.com/rss/tag/blockchain": "Cointelegraph - Blockchain",
+            "https://cointelegraph.com/rss/category/market-analysis": "Cointelegraph - Market Analysis",
+            "https://decrypt.co/feed": "Decrypt"
+        }
+        
+        # Load config hiện tại
+        config = self.cog.load_news_config(interaction.guild_id)
+        
+        # Lấy danh sách URL đã có
+        existing_urls = {feed['url'] for feed in config['rss_feeds']}
+        
+        # Thêm các feed được chọn
+        added_feeds = []
+        for url in selected_urls:
+            if url not in existing_urls:
+                config['rss_feeds'].append({
+                    'name': url_to_name.get(url, 'Unknown'),
+                    'url': url,
+                    'channel_id': channel_id
+                })
+                added_feeds.append(url_to_name.get(url, 'Unknown'))
+        
+        # Lưu config
+        self.cog.save_news_config(config, interaction.guild_id)
+        
+        # Tạo embed kết quả
+        embed = discord.Embed(
+            title="✅ Đã thêm RSS Feeds!",
+            description=f"Đã thêm **{len(added_feeds)}** RSS feeds vào channel này.",
+            color=discord.Color.green()
+        )
+        
+        if added_feeds:
+            embed.add_field(
+                name="📰 Feeds đã thêm:",
+                value="\n".join([f"✅ {name}" for name in added_feeds]),
+                inline=False
+            )
+        
+        if len(added_feeds) < len(selected_urls):
+            embed.add_field(
+                name="ℹ️ Lưu ý:",
+                value=f"Đã bỏ qua {len(selected_urls) - len(added_feeds)} feed(s) đã tồn tại.",
+                inline=False
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=None)
+
+class NewsMenuView(discord.ui.View):
+    """View chính cho menu quản lý tin tức"""
+    
+    def __init__(self):
+        super().__init__(timeout=180)
+        
+    @discord.ui.select(
+        placeholder="Chọn một tùy chọn...",
+        options=[
+            discord.SelectOption(
+                label="⚡ Quick Setup - Tự động cài đặt",
+                description="Tự động thêm tất cả RSS feeds phổ biến",
+                emoji="⚡",
+                value="quick_setup"
+            ),
+            discord.SelectOption(
+                label="Cài đặt kênh tin Messari",
+                description="Chọn kênh để nhận tin từ Messari API",
+                emoji="📊",
+                value="messari"
+            ),
+            discord.SelectOption(
+                label="Cài đặt kênh tin Santiment",
+                description="Chọn kênh để nhận tin từ Santiment API",
+                emoji="📈",
+                value="santiment"
+            ),
+            discord.SelectOption(
+                label="Cài đặt kênh tin 5 Phút Crypto",
+                description="Chọn kênh để nhận tin từ 5phutcrypto.io",
+                emoji="💰",
+                value="5phutcrypto"
+            ),
+            discord.SelectOption(
+                label="Thêm một RSS Feed mới",
+                description="Thêm nguồn RSS Feed tùy chỉnh",
+                emoji="➕",
+                value="add_rss"
+            ),
+            discord.SelectOption(
+                label="Xóa một RSS Feed",
+                description="Xóa RSS Feed đã cài đặt",
+                emoji="🗑️",
+                value="remove_rss"
+            ),
+            discord.SelectOption(
+                label="Liệt kê các nguồn tin",
+                description="Xem tất cả nguồn tin đang hoạt động",
+                emoji="📋",
+                value="list_sources"
+            )
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        """Xử lý khi user chọn một option"""
+        value = select.values[0]
+        
+        # Lấy cog instance
+        cog = interaction.client.get_cog('NewsCog')
+        
+        if value == "quick_setup":
+            # Hiển thị Quick Setup View
+            view = QuickSetupView(cog)
+            embed = discord.Embed(
+                title="⚡ Quick Setup - Cài đặt Nhanh",
+                description=(
+                    "Tự động thêm 6 RSS feeds phổ biến:\n\n"
+                    "🇻🇳 **VnExpress** - Tin mới nhất\n"
+                    "🇬🇧 **BBC News** - Tin quốc tế\n"
+                    "₿ **Cointelegraph** - Crypto news\n"
+                    "⛓️ **Cointelegraph** - Blockchain\n"
+                    "📊 **Cointelegraph** - Market Analysis\n"
+                    "🔐 **Decrypt** - Crypto & Web3\n\n"
+                    "Chọn **Cài đặt Tất cả** để thêm ngay hoặc **Chọn Từng Cái** để custom."
+                ),
+                color=discord.Color.gold()
+            )
+            embed.set_footer(text="Tất cả feeds sẽ được thêm vào channel này")
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "messari":
+            # Hiển thị ChannelSelect cho Messari
+            view = ChannelSelectView(cog, 'messari')
+            embed = discord.Embed(
+                title="📊 Cài đặt kênh tin Messari",
+                description="Chọn kênh để nhận tin tức từ Messari API",
+                color=discord.Color.blue()
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "santiment":
+            # Hiển thị ChannelSelect cho Santiment
+            view = ChannelSelectView(cog, 'santiment')
+            embed = discord.Embed(
+                title="📈 Cài đặt kênh tin Santiment",
+                description="Chọn kênh để nhận tin tức từ Santiment API",
+                color=discord.Color.blue()
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "5phutcrypto":
+            # Hiển thị ChannelSelect cho 5 Phút Crypto
+            view = ChannelSelectView(cog, '5phutcrypto')
+            embed = discord.Embed(
+                title="💰 Cài đặt kênh tin 5 Phút Crypto",
+                description="Chọn kênh để nhận tin tức từ 5phutcrypto.io",
+                color=discord.Color.orange()
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "add_rss":
+            # Hiển thị Modal để nhập thông tin RSS
+            modal = AddRSSModal(cog)
+            await interaction.response.send_modal(modal)
+            
+        elif value == "remove_rss":
+            # Hiển thị danh sách RSS để xóa
+            config = cog.load_news_config(interaction.guild_id)
+            
+            if not config['rss_feeds']:
+                await interaction.response.edit_message(
+                    content="❌ Không có RSS Feed nào để xóa!",
+                    embed=None,
+                    view=None
+                )
+                return
+                
+            view = RemoveRSSView(cog, config['rss_feeds'])
+            embed = discord.Embed(
+                title="🗑️ Xóa RSS Feed",
+                description="Chọn RSS Feed bạn muốn xóa:",
+                color=discord.Color.red()
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "list_sources":
+            # Liệt kê tất cả nguồn tin
+            config = cog.load_news_config(interaction.guild_id)
+            
+            embed = discord.Embed(
+                title="📋 Danh sách Nguồn Tin",
+                color=discord.Color.blue()
+            )
+            
+            # Messari
+            if config['messari_channel']:
+                channel = interaction.guild.get_channel(config['messari_channel'])
+                if not channel:
+                    # Thử fetch từ bot
+                    try:
+                        channel = await interaction.client.fetch_channel(config['messari_channel'])
+                    except:
+                        channel = None
+                
+                if channel:
+                    embed.add_field(
+                        name="📊 Messari API",
+                        value=f"Kênh: {channel.mention}\nID: `{config['messari_channel']}`",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="📊 Messari API",
+                        value=f"⚠️ Kênh không tìm thấy hoặc bot không có quyền truy cập\nID: `{config['messari_channel']}`",
+                        inline=False
+                    )
+            
+            # Santiment
+            if config['santiment_channel']:
+                channel = interaction.guild.get_channel(config['santiment_channel'])
+                if not channel:
+                    # Thử fetch từ bot
+                    try:
+                        channel = await interaction.client.fetch_channel(config['santiment_channel'])
+                    except:
+                        channel = None
+                
+                if channel:
+                    embed.add_field(
+                        name="📈 Santiment API",
+                        value=f"Kênh: {channel.mention}\nID: `{config['santiment_channel']}`",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="📈 Santiment API",
+                        value=f"⚠️ Kênh không tìm thấy hoặc bot không có quyền truy cập\nID: `{config['santiment_channel']}`",
+                        inline=False
+                    )
+            
+            # 5 Phút Crypto
+            if config.get('5phutcrypto_channel'):
+                channel = interaction.guild.get_channel(config['5phutcrypto_channel'])
+                if not channel:
+                    # Thử fetch từ bot
+                    try:
+                        channel = await interaction.client.fetch_channel(config['5phutcrypto_channel'])
+                    except:
+                        channel = None
+                
+                if channel:
+                    embed.add_field(
+                        name="💰 5 Phút Crypto",
+                        value=f"Kênh: {channel.mention}\nID: `{config['5phutcrypto_channel']}`",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="💰 5 Phút Crypto",
+                        value=f"⚠️ Kênh không tìm thấy hoặc bot không có quyền truy cập\nID: `{config['5phutcrypto_channel']}`",
+                        inline=False
+                    )
+            
+            # Economic Calendar
+            if config.get('economic_calendar_channel'):
+                channel = interaction.guild.get_channel(config['economic_calendar_channel'])
+                if not channel:
+                    # Thử fetch từ bot
+                    try:
+                        channel = await interaction.client.fetch_channel(config['economic_calendar_channel'])
+                    except:
+                        channel = None
+                
+                if channel:
+                    embed.add_field(
+                        name="📅 Economic Calendar",
+                        value=f"Kênh: {channel.mention}\nID: `{config['economic_calendar_channel']}`",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="📅 Economic Calendar",
+                        value=f"⚠️ Kênh không tìm thấy hoặc bot không có quyền truy cập\nID: `{config['economic_calendar_channel']}`",
+                        inline=False
+                    )
+            
+            # RSS Feeds
+            if config['rss_feeds']:
+                rss_list = ""
+                for feed in config['rss_feeds']:
+                    channel = interaction.guild.get_channel(feed['channel_id'])
+                    if not channel:
+                        # Thử fetch từ bot
+                        try:
+                            channel = await interaction.client.fetch_channel(feed['channel_id'])
+                        except:
+                            channel = None
+                    
+                    rss_list += f"**{feed['name']}**\n"
+                    rss_list += f"URL: `{feed['url']}`\n"
+                    if channel:
+                        rss_list += f"Kênh: {channel.mention}\n\n"
+                    else:
+                        rss_list += f"⚠️ Kênh không tìm thấy (ID: `{feed['channel_id']}`)\n\n"
+                
+                embed.add_field(
+                    name=f"📰 RSS Feeds ({len(config['rss_feeds'])} feeds)",
+                    value=rss_list if len(rss_list) < 1024 else rss_list[:1000] + "...",
+                    inline=False
+                )
+            
+            if not config['messari_channel'] and not config['santiment_channel'] and not config.get('5phutcrypto_channel') and not config['rss_feeds']:
+                embed.description = "Chưa có nguồn tin nào được cài đặt."
+            
+            await interaction.response.edit_message(embed=embed, view=None)
+
+class EconomicMenuView(discord.ui.View):
+    """View riêng cho Economic Calendar"""
+    
+    def __init__(self):
+        super().__init__(timeout=180)
+        
+    @discord.ui.select(
+        placeholder="Chọn một tùy chọn...",
+        options=[
+            discord.SelectOption(
+                label="Cài đặt kênh Economic Calendar",
+                description="Chọn kênh để nhận cập nhật kinh tế",
+                emoji="📊",
+                value="setup_channel"
+            ),
+            discord.SelectOption(
+                label="Xem các chỉ số đang theo dõi",
+                description="Danh sách indicators từ FRED",
+                emoji="📋",
+                value="list_indicators"
+            ),
+            discord.SelectOption(
+                label="Kiểm tra dữ liệu mới",
+                description="Force check dữ liệu kinh tế mới",
+                emoji="🔄",
+                value="force_check"
+            )
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        """Xử lý khi user chọn option"""
+        value = select.values[0]
+        cog = interaction.client.get_cog('NewsCog')
+        
+        if value == "setup_channel":
+            view = ChannelSelectView(cog, 'economic_calendar')
+            embed = discord.Embed(
+                title="📊 Cài đặt kênh Economic Calendar",
+                description="Chọn kênh để nhận thông báo về các chỉ số kinh tế quan trọng từ FRED",
+                color=discord.Color.green()
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "list_indicators":
+            embed = discord.Embed(
+                title="📋 Các Chỉ Số Đang Theo Dõi",
+                description="Dữ liệu từ FRED (Federal Reserve Economic Data)",
+                color=discord.Color.blue()
+            )
+            
+            # High impact indicators
+            embed.add_field(
+                name="🔴 High Impact",
+                value=(
+                    "• **Federal Funds Rate** (DFF) - Lãi suất Fed\n"
+                    "• **Unemployment Rate** (UNRATE) - Tỷ lệ thất nghiệp\n"
+                    "• **CPI** (CPIAUCSL) - Chỉ số giá tiêu dùng\n"
+                    "• **GDP** (GDP) - Tổng sản phẩm quốc nội\n"
+                    "• **Non-Farm Payrolls** (PAYEMS) - Việc làm phi nông nghiệp"
+                ),
+                inline=False
+            )
+            
+            # Medium impact indicators
+            embed.add_field(
+                name="🟠 Medium Impact",
+                value=(
+                    "• **10Y-2Y Treasury Spread** (T10Y2Y)\n"
+                    "• **USD/EUR Rate** (DEXUSEU)"
+                ),
+                inline=False
+            )
+            
+            embed.set_footer(text="Bot kiểm tra cập nhật mỗi 5 phút")
+            await interaction.response.edit_message(embed=embed, view=self)
+            
+        elif value == "force_check":
+            await interaction.response.defer(thinking=True)
+            
+            config = cog.load_news_config(interaction.guild_id)
+            if not config.get('economic_calendar_channel'):
+                await interaction.followup.edit_message(
+                    message_id=interaction.message.id,
+                    content="❌ Chưa cài đặt kênh Economic Calendar!",
+                    embed=None,
+                    view=None
+                )
+                return
+            
+            channel = interaction.guild.get_channel(config['economic_calendar_channel'])
+            if not channel:
+                await interaction.followup.edit_message(
+                    message_id=interaction.message.id,
+                    content="❌ Không tìm thấy kênh đã cấu hình!",
+                    embed=None,
+                    view=None
+                )
+                return
+            
+            # Fetch và gửi economic data
+            events = await cog.fetch_economic_calendar()
+            
+            if not events:
+                await interaction.followup.edit_message(
+                    message_id=interaction.message.id,
+                    content="ℹ️ Không có dữ liệu kinh tế mới trong lúc này.",
+                    embed=None,
+                    view=None
+                )
+                return
+            
+            # Gửi 3 events đầu tiên
+            sent_count = 0
+            for event in events[:3]:
+                await cog.send_economic_event_update(channel, event, is_update=False)
+                sent_count += 1
+            
+            await interaction.followup.edit_message(
+                message_id=interaction.message.id,
+                content=f"✅ Đã gửi {sent_count} chỉ số kinh tế vào {channel.mention}",
+                embed=None,
+                view=None
+            )
+
+class NewsCog(commands.Cog):
+    """Cog quản lý tin tức tự động"""
+    
+    def __init__(self, bot):
+        self.bot = bot
+        self.config_path = 'data/news_config.json'
+        self.last_posts_path = 'data/last_post_ids.json'
+        self.temp_rss_data = {}  # Lưu tạm data khi thêm RSS
+        self.translator = GoogleTranslator(source='auto', target='vi')  # Khởi tạo Google Translator
+        
+        # Khởi động background tasks
+        self.news_checker.start()
+        self.daily_calendar_summary.start()
+        
+    def cog_unload(self):
+        """Dừng task khi cog unload"""
+        self.news_checker.cancel()
+        self.daily_calendar_summary.cancel()
+        
+    def load_news_config(self, guild_id=None):
+        """Load cấu hình tin tức cho guild cụ thể"""
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                all_configs = json.load(f)
+            
+            # Nếu là format cũ (không có guilds), migrate sang format mới
+            if 'guilds' not in all_configs:
+                # Migration: Chuyển config cũ thành format mới
+                old_config = all_configs.copy()
+                all_configs = {'guilds': {}}
+                # Nếu có guild_id, lưu config cũ cho guild đó
+                if guild_id:
+                    all_configs['guilds'][str(guild_id)] = old_config
+                # Lưu lại format mới
+                self.save_all_configs(all_configs)
+            
+            # Trả về config của guild cụ thể
+            if guild_id:
+                guild_key = str(guild_id)
+                if guild_key in all_configs['guilds']:
+                    return all_configs['guilds'][guild_key]
+            
+            # Default config
+            return {
+                "messari_channel": None,
+                "santiment_channel": None,
+                "5phutcrypto_channel": None,
+                "economic_calendar_channel": None,
+                "rss_feeds": []
+            }
+        except:
+            return {
+                "messari_channel": None,
+                "santiment_channel": None,
+                "5phutcrypto_channel": None,
+                "economic_calendar_channel": None,
+                "rss_feeds": []
+            }
+    
+    def save_news_config(self, config, guild_id):
+        """Lưu cấu hình tin tức cho guild cụ thể"""
+        try:
+            # Load tất cả configs
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    all_configs = json.load(f)
+            except:
+                all_configs = {'guilds': {}}
+            
+            # Đảm bảo có structure guilds
+            if 'guilds' not in all_configs:
+                all_configs = {'guilds': {}}
+            
+            # Lưu config cho guild này
+            all_configs['guilds'][str(guild_id)] = config
+            
+            # Lưu file
+            self.save_all_configs(all_configs)
+        except Exception as e:
+            print(f"Lỗi khi lưu config: {e}")
+    
+    def save_all_configs(self, all_configs):
+        """Lưu toàn bộ configs"""
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            json.dump(all_configs, f, indent=2, ensure_ascii=False)
+    
+    def load_last_posts(self):
+        """Load danh sách ID bài viết đã đăng"""
+        try:
+            with open(self.last_posts_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {
+                "messari": [],
+                "santiment": [],
+                "5phutcrypto": [],
+                "economic_events": [],
+                "rss": {}
+            }
+    
+    def save_last_posts(self, data):
+        """Lưu danh sách ID bài viết đã đăng"""
+        with open(self.last_posts_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    
+    async def translate_to_vietnamese(self, text, max_length=None):
+        """Dịch text sang tiếng Việt"""
+        if not text:
+            return ""
+        
+        try:
+            # Giới hạn độ dài nếu cần (Google Translate có giới hạn 5000 ký tự)
+            if max_length and len(text) > max_length:
+                text = text[:max_length]
+            
+            # deep-translator hỗ trợ tối đa 5000 ký tự
+            if len(text) > 4500:
+                text = text[:4500]
+            
+            # Dịch trong executor để không block
+            loop = asyncio.get_event_loop()
+            translated = await loop.run_in_executor(
+                None, 
+                self.translator.translate,
+                text
+            )
+            return translated
+        except Exception as e:
+            print(f"Lỗi khi dịch text: {e}")
+            return text  # Trả về text gốc nếu lỗi
+    
+    def _get_feed_icon(self, feed_url, feed_name):
+        """Lấy icon URL cho RSS feed dựa trên nguồn"""
+        # Sử dụng Google Favicon Service để lấy icon chất lượng cao
+        try:
+            from urllib.parse import urlparse
+            
+            # Map domain cho các nguồn tin chính
+            domain_map = {
+                'vnexpress': 'vnexpress.net',
+                'bbc': 'bbc.com',
+                'cnn': 'cnn.com',
+                'reuters': 'reuters.com',
+                'bloomberg': 'bloomberg.com',
+                'techcrunch': 'techcrunch.com',
+                'theverge': 'theverge.com',
+                'cointelegraph': 'cointelegraph.com',
+                'decrypt': 'decrypt.co',
+            }
+            
+            # Tìm domain phù hợp
+            domain = None
+            for key, mapped_domain in domain_map.items():
+                if key in feed_name.lower() or key in feed_url.lower():
+                    domain = mapped_domain
+                    break
+            
+            # Nếu không có trong map, extract từ URL
+            if not domain:
+                parsed = urlparse(feed_url)
+                domain = parsed.netloc
+            
+            if domain:
+                # Google Favicon Service với size 128x128 để hiển thị rõ
+                return f'https://www.google.com/s2/favicons?domain={domain}&sz=128'
+        except Exception as e:
+            print(f"Lỗi khi lấy icon: {e}")
+        
+        # Default fallback icon
+        return 'https://cdn-icons-png.flaticon.com/512/888/888846.png'
+    
+    async def fetch_messari_news(self):
+        """Lấy tin tức từ Messari API"""
+        api_key = os.getenv('MESSARI_API_KEY')
+        if not api_key:
+            return []
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {'x-messari-api-key': api_key}
+                url = 'https://data.messari.io/api/v1/news'
+                
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get('data', [])[:5]  # Lấy 5 tin mới nhất
+        except Exception as e:
+            print(f"Lỗi khi lấy tin Messari: {e}")
+        
+        return []
+    
+    async def fetch_5phutcrypto_news(self):
+        """Scrape tin tức mới nhất từ 5phutcrypto.io"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = 'https://5phutcrypto.io/'
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status == 200:
+                        html = await response.text()
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        articles = []
+                        
+                        # Tìm tất cả các bài viết trong section "Tin tức"
+                        # Tìm các thẻ <h3> có link bài viết
+                        for h3 in soup.find_all('h3'):
+                            link_tag = h3.find('a', href=True)
+                            if link_tag and link_tag['href'].startswith('https://5phutcrypto.io/'):
+                                # Bỏ qua các link đặc biệt
+                                if any(skip in link_tag['href'] for skip in ['/tag/', '/author/', '/goc-nhin/', '/chuyen-sau/']):
+                                    continue
+                                
+                                article = {
+                                    'id': link_tag['href'],
+                                    'title': link_tag.get_text(strip=True),
+                                    'url': link_tag['href'],
+                                    'published_at': datetime.now().isoformat()
+                                }
+                                
+                                # Tìm ảnh thumbnail (thường ở gần h3)
+                                parent = h3.find_parent()
+                                if parent:
+                                    img = parent.find('img')
+                                    if img and 'data-src' in img.attrs:
+                                        article['image_url'] = img['data-src']
+                                    elif img and 'src' in img.attrs and not img['src'].startswith('data:'):
+                                        article['image_url'] = img['src']
+                                
+                                articles.append(article)
+                                
+                                if len(articles) >= 5:
+                                    break
+                        
+                        return articles[:5]
+        except Exception as e:
+            print(f"Lỗi khi scrape 5phutcrypto.io: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return []
+    
+    async def send_economic_event_update(self, channel, event, is_update=False):
+        """Gửi thông báo chỉ số kinh tế với Forecast/Actual/Previous từ Investing.com"""
+        try:
+            # Lấy thông tin
+            event_name = event.get('event', 'Unknown Event')
+            country = event.get('country', 'N/A')
+            impact = event.get('impact', 'Unknown')
+            time_str = event.get('time', 'N/A')
+            
+            # Màu sắc theo impact
+            color_map = {
+                'High': 0xFF4444,      # Đỏ đậm
+                'Medium': 0xFFA500,    # Cam
+                'Low': 0x4CAF50        # Xanh lá
+            }
+            color = color_map.get(impact, 0x808080)
+            
+            # Icon theo impact
+            icon_map = {
+                'High': '🔴',
+                'Medium': '🟠',
+                'Low': '🟢'
+            }
+            icon = icon_map.get(impact, '⚪')
+            
+            # Title
+            title = f"{event_name}"
+            
+            # Tạo embed
+            embed = discord.Embed(
+                title=title,
+                color=color,
+                timestamp=datetime.now()
+            )
+            
+            # Lấy 3 giá trị: Forecast, Actual, Previous
+            forecast = event.get('forecast', 'N/A')
+            actual = event.get('actual', 'N/A')
+            previous = event.get('previous', 'N/A')
+            
+            # Tạo field hiển thị đầy đủ 3 giá trị
+            comparison_text = f"```diff\n"
+            
+            # Hiển thị Forecast
+            comparison_text += f"  📊 Forecast:  {forecast}\n"
+            
+            # Hiển thị Actual với màu (+ nếu tăng so với previous, - nếu giảm)
+            try:
+                # Thử parse để so sánh
+                actual_num = float(str(actual).replace('%', '').replace('K', '').replace('M', '').replace('B', '').replace(',', '').strip()) if actual != 'N/A' else None
+                previous_num = float(str(previous).replace('%', '').replace('K', '').replace('M', '').replace('B', '').replace(',', '').strip()) if previous != 'N/A' else None
+                
+                if actual_num is not None and previous_num is not None:
+                    if actual_num > previous_num:
+                        comparison_text += f"+ 📈 Actual:    {actual}\n"
+                    elif actual_num < previous_num:
+                        comparison_text += f"- 📉 Actual:    {actual}\n"
+                    else:
+                        comparison_text += f"  📊 Actual:    {actual}\n"
+                else:
+                    comparison_text += f"  📊 Actual:    {actual}\n"
+            except:
+                comparison_text += f"  📊 Actual:    {actual}\n"
+            
+            # Hiển thị Previous
+            comparison_text += f"  📋 Previous:  {previous}\n"
+            comparison_text += f"```"
+            
+            embed.add_field(
+                name=f"{icon} **{impact} Impact Event**",
+                value=comparison_text,
+                inline=False
+            )
+            
+            # Thông tin chi tiết
+            info_text = f"⏰ **Time:** {time_str}\n"
+            info_text += f"🌍 **Country:** {country}\n"
+            
+            embed.add_field(
+                name="ℹ️ Details",
+                value=info_text,
+                inline=False
+            )
+            
+            # Set author
+            embed.set_author(
+                name="Investing.com Economic Calendar",
+                icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
+            )
+            
+            # Footer
+            footer_text = "📊 Federal Reserve Economic Data (FRED) • Official Data"
+            embed.set_footer(
+                text=footer_text,
+                icon_url="https://www.google.com/s2/favicons?domain=stlouisfed.org&sz=128"
+            )
+            
+            await channel.send(embed=embed)
+            
+        except Exception as e:
+            print(f"Lỗi khi gửi economic event: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            traceback.print_exc()
+    
+    async def fetch_economic_calendar(self):
+        """Lấy dữ liệu kinh tế từ Investing.com (có đầy đủ Forecast/Actual/Previous)"""
+        try:
+            from bs4 import BeautifulSoup
+            import aiohttp
+            
+            url = "https://www.investing.com/economic-calendar/"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
+            
+            economic_updates = []
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status == 200:
+                        html = await response.text()
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Find all event rows
+                        rows = soup.find_all('tr', {'class': 'js-event-item'})
+                        print(f"📊 Found {len(rows)} economic events from Investing.com")
+                        
+                        for row in rows[:50]:  # Lấy 50 events đầu tiên
+                            try:
+                                # Get time
+                                time_elem = row.find('td', {'class': 'time'})
+                                time_str = time_elem.text.strip() if time_elem else ''
+                                
+                                # Get country
+                                country_elem = row.find('td', {'class': 'flagCur'})
+                                if country_elem:
+                                    country_span = country_elem.find('span', {'class': 'ceFlags'})
+                                    country = country_span.get('title', '') if country_span else ''
+                                else:
+                                    country = ''
+                                
+                                # Filter for major economies only
+                                major_countries = ['United States', 'Euro Zone', 'Germany', 'United Kingdom', 'Japan', 'China']
+                                if country not in major_countries:
+                                    continue
+                                
+                                # Get impact
+                                impact_elem = row.find('td', {'class': 'sentiment'})
+                                impact_class = str(impact_elem.get('class', [])) if impact_elem else ''
+                                if 'redFont' in impact_class or 'bearish' in impact_class:
+                                    impact = 'High'
+                                elif 'yellowFont' in impact_class or 'neutral' in impact_class:
+                                    impact = 'Medium'
+                                else:
+                                    impact = 'Low'
+                                
+                                # Get event name
+                                event_elem = row.find('td', {'class': 'event'})
+                                event_name = event_elem.text.strip() if event_elem else ''
+                                
+                                if not event_name:
+                                    continue
+                                
+                                # Get Actual value
+                                actual_elem = row.find('td', {'class': 'act'})
+                                actual_str = actual_elem.text.strip() if actual_elem else ''
+                                
+                                # Get Forecast value
+                                forecast_elem = row.find('td', {'class': 'fore'})
+                                forecast_str = forecast_elem.text.strip() if forecast_elem else ''
+                                
+                                # Get Previous value
+                                previous_elem = row.find('td', {'class': 'prev'})
+                                previous_str = previous_elem.text.strip() if previous_elem else ''
+                                
+                                # Skip if no forecast AND no previous (nhưng có thể có actual)
+                                if not forecast_str and not previous_str:
+                                    continue
+                                
+                                # Create event ID
+                                event_id = f"investing_{country.replace(' ', '_')}_{event_name.replace(' ', '_')[:30]}_{time_str}"
+                                
+                                event = {
+                                    'id': event_id,
+                                    'event': event_name,
+                                    'country': country,
+                                    'impact': impact,
+                                    'time': time_str,
+                                    'actual': actual_str if actual_str else 'N/A',
+                                    'forecast': forecast_str if forecast_str else 'N/A',
+                                    'previous': previous_str if previous_str else 'N/A',
+                                    'datetime': datetime.now()
+                                }
+                                
+                                economic_updates.append(event)
+                                
+                            except Exception as e:
+                                print(f"Lỗi khi parse event: {e}")
+                                continue
+                        
+                        print(f"✅ Scraped {len(economic_updates)} relevant economic events")
+            
+            return economic_updates
+            
+        except Exception as e:
+            print(f"Lỗi khi lấy economic calendar: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return []
+    
+    async def fetch_santiment_news(self):
+        """Lấy tin tức từ Santiment API"""
+        api_key = os.getenv('SANTIMENT_API_KEY')
+        if not api_key:
+            return []
+        
+        try:
+            # GraphQL query cho Santiment
+            query = """
+            {
+              getNews(
+                size: 5
+                tag: "news"
+              ) {
+                id
+                title
+                description
+                url
+                publishedAt
+              }
+            }
+            """
+            
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Apikey {api_key}'
+                }
+                url = 'https://api.santiment.net/graphql'
+                
+                async with session.post(url, json={'query': query}, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get('data', {}).get('getNews', [])
+        except Exception as e:
+            print(f"Lỗi khi lấy tin Santiment: {e}")
+        
+        return []
+    
+    async def fetch_rss_feed(self, url):
+        """Lấy tin từ RSS Feed"""
+        try:
+            # Sử dụng feedparser trong executor để không block
+            loop = asyncio.get_event_loop()
+            feed = await loop.run_in_executor(None, feedparser.parse, url)
+            
+            if feed.entries:
+                return feed.entries[:5]  # Lấy 5 tin mới nhất
+        except Exception as e:
+            print(f"Lỗi khi lấy RSS từ {url}: {e}")
+        
+        return []
+    
+    @tasks.loop(minutes=5)
+    async def news_checker(self):
+        """Background task kiểm tra tin tức mới mỗi 5 phút"""
+        await self.bot.wait_until_ready()
+        
+        last_posts = self.load_last_posts()
+        
+        # Lặp qua tất cả guilds
+        for guild in self.bot.guilds:
+            try:
+                config = self.load_news_config(guild.id)
+                
+                # Kiểm tra Messari
+                if config['messari_channel']:
+                    channel = self.bot.get_channel(config['messari_channel'])
+                    if channel:
+                        news = await self.fetch_messari_news()
+                        for article in news:
+                            article_id = article.get('id')
+                            if article_id not in last_posts['messari']:
+                                # Lấy nội dung gốc
+                                original_title = article.get('title', 'Không có tiêu đề')
+                                original_content = article.get('content', '')[:400]
+                                
+                                # Dịch sang tiếng Việt
+                                translated_title = await self.translate_to_vietnamese(original_title, 250)
+                                translated_content = await self.translate_to_vietnamese(original_content, 400)
+                                
+                                # Đăng tin mới với thiết kế đẹp - chỉ bản dịch
+                                embed = discord.Embed(
+                                    title=f"📰 {translated_title}",
+                                    url=article.get('url', ''),
+                                    description=translated_content,
+                                    color=0x00D9FF,  # Xanh dương sáng
+                                    timestamp=datetime.fromisoformat(article.get('published_at', '').replace('Z', '+00:00'))
+                                )
+                                
+                                # Thêm author info với Google Favicon
+                                embed.set_author(
+                                    name="Messari",
+                                    icon_url="https://www.google.com/s2/favicons?domain=messari.io&sz=128"
+                                )
+                                
+                                # Thêm thumbnail/image nếu có
+                                if article.get('image_url'):
+                                    embed.set_image(url=article.get('image_url'))
+                                
+                                # Footer với icon
+                                embed.set_footer(
+                                    text="🌐 Nguồn: Messari • Crypto News • Đã dịch tự động",
+                                    icon_url="https://www.google.com/s2/favicons?domain=messari.io&sz=128"
+                                )
+                                
+                                await channel.send(embed=embed)
+                                
+                                # Lưu ID
+                                last_posts['messari'].append(article_id)
+                                # Giữ tối đa 100 IDs
+                                if len(last_posts['messari']) > 100:
+                                    last_posts['messari'] = last_posts['messari'][-100:]
+                
+                # Kiểm tra Santiment
+                if config['santiment_channel']:
+                    channel = self.bot.get_channel(config['santiment_channel'])
+                    if channel:
+                        news = await self.fetch_santiment_news()
+                        for article in news:
+                            article_id = article.get('id')
+                            if article_id not in last_posts['santiment']:
+                                # Lấy nội dung gốc
+                                original_title = article.get('title', 'Không có tiêu đề')
+                                original_description = article.get('description', '')[:400]
+                                
+                                # Dịch sang tiếng Việt
+                                translated_title = await self.translate_to_vietnamese(original_title, 250)
+                                translated_description = await self.translate_to_vietnamese(original_description, 400)
+                                
+                                # Đăng tin mới - chỉ bản dịch
+                                embed = discord.Embed(
+                                    title=f"📊 {translated_title}",
+                                    url=article.get('url', ''),
+                                    description=translated_description,
+                                    color=0x26A69A,  # Xanh lá ngọc lam
+                                    timestamp=datetime.fromisoformat(article.get('publishedAt', '').replace('Z', '+00:00'))
+                                )
+                                
+                                # Set author với Google Favicon
+                                embed.set_author(
+                                    name="Santiment Analytics",
+                                    icon_url="https://www.google.com/s2/favicons?domain=santiment.net&sz=128"
+                                )
+                                
+                                # Footer với icon
+                                embed.set_footer(
+                                    text="📈 Nguồn: Santiment • Market Intelligence • Đã dịch tự động",
+                                    icon_url="https://www.google.com/s2/favicons?domain=santiment.net&sz=128"
+                                )
+                                
+                                await channel.send(embed=embed)
+                                
+                                # Lưu ID
+                                last_posts['santiment'].append(article_id)
+                                if len(last_posts['santiment']) > 100:
+                                    last_posts['santiment'] = last_posts['santiment'][-100:]
+                
+                # Kiểm tra 5 Phút Crypto
+                if config.get('5phutcrypto_channel'):
+                    channel = self.bot.get_channel(config['5phutcrypto_channel'])
+                    if channel:
+                        news = await self.fetch_5phutcrypto_news()
+                        for article in news:
+                            article_id = article.get('id')
+                            if article_id not in last_posts['5phutcrypto']:
+                                # Lấy tiêu đề (đã là tiếng Việt)
+                                title = article.get('title', 'Không có tiêu đề')
+                                
+                                # Đăng tin mới
+                                embed = discord.Embed(
+                                    title=f"💰 {title}",
+                                    url=article.get('url', ''),
+                                    description="",  # 5phutcrypto không có description ngắn
+                                    color=0xFF6B00,  # Cam của 5phutcrypto
+                                    timestamp=datetime.fromisoformat(article.get('published_at', ''))
+                                )
+                                
+                                # Set author với icon
+                                embed.set_author(
+                                    name="5 Phút Crypto",
+                                    icon_url="https://www.google.com/s2/favicons?domain=5phutcrypto.io&sz=128"
+                                )
+                                
+                                # Thêm ảnh nếu có
+                                if article.get('image_url'):
+                                    embed.set_image(url=article.get('image_url'))
+                                
+                                # Footer với icon
+                                embed.set_footer(
+                                    text="💰 Nguồn: 5 Phút Crypto • Tin tức & phân tích",
+                                    icon_url="https://www.google.com/s2/favicons?domain=5phutcrypto.io&sz=128"
+                                )
+                                
+                                await channel.send(embed=embed)
+                                
+                                # Lưu ID
+                                last_posts['5phutcrypto'].append(article_id)
+                                if len(last_posts['5phutcrypto']) > 100:
+                                    last_posts['5phutcrypto'] = last_posts['5phutcrypto'][-100:]
+                
+                # Kiểm tra Economic Calendar (FRED Data)
+                if config.get('economic_calendar_channel'):
+                    channel = self.bot.get_channel(config['economic_calendar_channel'])
+                    if channel:
+                        events = await self.fetch_economic_calendar()
+                        
+                        for event in events:
+                            event_id = event.get('id')
+                            
+                            # Kiểm tra xem đã thông báo event này chưa
+                            if event_id not in last_posts.get('economic_events', []):
+                                # Chưa thông báo, gửi thông báo
+                                await self.send_economic_event_update(channel, event, is_update=False)
+                                
+                                # Lưu vào danh sách đã thông báo
+                                if 'economic_events' not in last_posts:
+                                    last_posts['economic_events'] = []
+                                
+                                last_posts['economic_events'].append(event_id)
+                                
+                                # Giữ tối đa 100 events
+                                if len(last_posts['economic_events']) > 100:
+                                    last_posts['economic_events'] = last_posts['economic_events'][-100:]
+                
+                # Kiểm tra RSS Feeds
+                for feed_config in config['rss_feeds']:
+                    channel = self.bot.get_channel(feed_config['channel_id'])
+                    if channel:
+                        feed_url = feed_config['url']
+                        feed_name = feed_config['name']
+                        
+                        # Khởi tạo list cho feed này nếu chưa có
+                        if feed_url not in last_posts['rss']:
+                            last_posts['rss'][feed_url] = []
+                        
+                        entries = await self.fetch_rss_feed(feed_url)
+                        for entry in entries:
+                            try:
+                                entry_id = entry.get('id', entry.get('link', ''))
+                                
+                                if entry_id not in last_posts['rss'][feed_url]:
+                                    # Chọn màu dựa trên nguồn
+                                    color_map = {
+                                        'vnexpress': 0xC81E1E,  # Đỏ VNExpress
+                                        'bbc': 0xBB1919,         # Đỏ BBC
+                                        'cnn': 0xCC0000,         # Đỏ CNN
+                                        'reuters': 0xFF6600,     # Cam Reuters
+                                        'bloomberg': 0x000000,   # Đen Bloomberg
+                                    }
+                                    
+                                    # Tìm màu phù hợp với feed
+                                    color = 0xFFA500  # Cam mặc định
+                                    for key, col in color_map.items():
+                                        if key in feed_name.lower() or key in feed_url.lower():
+                                            color = col
+                                            break
+                                    
+                                    # Lấy title và description gốc
+                                    original_title = entry.get('title', 'Không có tiêu đề')
+                                    if len(original_title) > 250:
+                                        original_title = original_title[:247] + '...'
+                                    
+                                    # Mô tả với định dạng đẹp - loại bỏ HTML tags
+                                    original_description = entry.get('summary', entry.get('description', ''))
+                                    if original_description:
+                                        # Loại bỏ tất cả HTML tags bằng regex
+                                        original_description = re.sub(r'<[^>]+>', '', original_description)
+                                        # Xóa nhiều khoảng trắng liên tiếp
+                                        original_description = re.sub(r'\s+', ' ', original_description)
+                                        # Trim
+                                        original_description = original_description.strip()
+                                        # Giới hạn độ dài
+                                        if len(original_description) > 350:
+                                            original_description = original_description[:347] + '...'
+                                    
+                                    # Kiểm tra xem có phải tiếng Việt không (VNExpress không cần dịch)
+                                    is_vietnamese = 'vnexpress' in feed_url.lower() or 'vn' in feed_name.lower()
+                                    
+                                    if is_vietnamese:
+                                        # Không dịch, chỉ hiển thị tiếng Việt
+                                        translated_title = original_title
+                                        description_text = original_description if original_description else "Không có mô tả"
+                                    else:
+                                        # Dịch sang tiếng Việt
+                                        translated_title = await self.translate_to_vietnamese(original_title, 250)
+                                        
+                                        if original_description:
+                                            translated_description = await self.translate_to_vietnamese(original_description, 350)
+                                            description_text = translated_description
+                                        else:
+                                            description_text = "Không có mô tả"
+                                    
+                                    # Tạo embed đẹp - chỉ bản dịch
+                                    embed = discord.Embed(
+                                        title=f"🌍 {translated_title}",
+                                        url=entry.get('link', ''),
+                                        description=description_text,
+                                        color=color
+                                    )
+                                    
+                                    # Thêm published date nếu có
+                                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                        try:
+                                            dt = datetime(*entry.published_parsed[:6])
+                                            embed.timestamp = dt
+                                        except Exception as e:
+                                            print(f"Lỗi parse timestamp: {e}")
+                                    
+                                    # Thêm thumbnail/image từ RSS nếu có - xử lý an toàn
+                                    image_url = None
+                                    
+                                    # Thử media_content trước
+                                    if hasattr(entry, 'media_content') and entry.media_content:
+                                        try:
+                                            if len(entry.media_content) > 0 and 'url' in entry.media_content[0]:
+                                                image_url = entry.media_content[0]['url']
+                                        except Exception as e:
+                                            print(f"Lỗi media_content: {e}")
+                                    
+                                    # Thử media_thumbnail
+                                    if not image_url and hasattr(entry, 'media_thumbnail') and entry.media_thumbnail:
+                                        try:
+                                            if len(entry.media_thumbnail) > 0 and 'url' in entry.media_thumbnail[0]:
+                                                image_url = entry.media_thumbnail[0]['url']
+                                        except Exception as e:
+                                            print(f"Lỗi media_thumbnail: {e}")
+                                    
+                                    # Thử enclosures (VNExpress dùng cái này)
+                                    if not image_url and hasattr(entry, 'enclosures') and entry.enclosures:
+                                        try:
+                                            for enclosure in entry.enclosures:
+                                                enc_type = enclosure.get('type', '')
+                                                enc_href = enclosure.get('href', '')
+                                                if 'image' in enc_type.lower() and enc_href:
+                                                    image_url = enc_href
+                                                    break
+                                        except Exception as e:
+                                            print(f"Lỗi enclosures: {e}")
+                                    
+                                    # Set image nếu tìm thấy
+                                    if image_url:
+                                        try:
+                                            embed.set_image(url=image_url)
+                                        except Exception as e:
+                                            print(f"Lỗi set_image với URL {image_url}: {e}")
+                                    
+                                    # Set author với icon
+                                    try:
+                                        embed.set_author(
+                                            name=feed_name,
+                                            icon_url=self._get_feed_icon(feed_url, feed_name)
+                                        )
+                                    except Exception as e:
+                                        print(f"Lỗi set_author: {e}")
+                                    
+                                    # Footer đẹp với emoji
+                                    try:
+                                        footer_text = f"📡 Nguồn: {feed_name} • RSS Feed"
+                                        if not is_vietnamese:
+                                            footer_text += " • Đã dịch tự động"
+                                        
+                                        embed.set_footer(
+                                            text=footer_text,
+                                            icon_url=self._get_feed_icon(feed_url, feed_name)
+                                        )
+                                    except Exception as e:
+                                        print(f"Lỗi set_footer: {e}")
+                                    
+                                    # Gửi embed
+                                    await channel.send(embed=embed)
+                                    
+                                    # Lưu ID
+                                    last_posts['rss'][feed_url].append(entry_id)
+                                    if len(last_posts['rss'][feed_url]) > 100:
+                                        last_posts['rss'][feed_url] = last_posts['rss'][feed_url][-100:]
+                            
+                            except Exception as e:
+                                print(f"Lỗi khi xử lý RSS entry từ {feed_name}: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
+            
+            except Exception as e:
+                print(f"Lỗi khi xử lý tin tức cho guild {guild.id}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Lưu last_posts
+        self.save_last_posts(last_posts)
+    
+    @news_checker.before_loop
+    async def before_news_checker(self):
+        """Đợi bot sẵn sàng trước khi chạy task"""
+        await self.bot.wait_until_ready()
+    
+    @tasks.loop(hours=1)
+    async def daily_calendar_summary(self):
+        """Gửi lịch Economic Calendar vào 7h sáng UTC+7 mỗi ngày"""
+        await self.bot.wait_until_ready()
+        
+        # Lấy giờ hiện tại theo UTC+7
+        vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+        now = datetime.now(vietnam_tz)
+        
+        # Chỉ chạy vào 7h sáng
+        if now.hour != 7:
+            return
+        
+        # Lặp qua tất cả guilds
+        for guild in self.bot.guilds:
+            try:
+                config = self.load_news_config(guild.id)
+                
+                # Kiểm tra có channel Economic Calendar không
+                if config['economic_calendar_channel']:
+                    channel = self.bot.get_channel(config['economic_calendar_channel'])
+                    if channel:
+                        # Fetch economic calendar
+                        events = await self.fetch_economic_calendar()
+                        
+                        if events:
+                            # Tạo embed tổng hợp lịch trong ngày
+                            embed = discord.Embed(
+                                title="📅 Economic Calendar - Lịch Kinh Tế Hôm Nay",
+                                description=f"Các sự kiện kinh tế quan trọng trong ngày {now.strftime('%d/%m/%Y')}",
+                                color=0x3498DB,
+                                timestamp=datetime.now()
+                            )
+                            
+                            # Phân loại theo impact
+                            high_impact = [e for e in events if e['impact'] == 'High']
+                            medium_impact = [e for e in events if e['impact'] == 'Medium']
+                            low_impact = [e for e in events if e['impact'] == 'Low']
+                            
+                            # Thêm High Impact events
+                            if high_impact:
+                                high_text = ""
+                                for event in high_impact[:5]:  # Tối đa 5 events
+                                    time = event.get('time', 'TBA')
+                                    name = event.get('event', 'Unknown')
+                                    country = event.get('country', 'N/A')
+                                    high_text += f"🔴 **{time}** - {name} ({country})\n"
+                                
+                                embed.add_field(
+                                    name="🔴 High Impact Events",
+                                    value=high_text if high_text else "Không có",
+                                    inline=False
+                                )
+                            
+                            # Thêm Medium Impact events
+                            if medium_impact:
+                                medium_text = ""
+                                for event in medium_impact[:5]:
+                                    time = event.get('time', 'TBA')
+                                    name = event.get('event', 'Unknown')
+                                    country = event.get('country', 'N/A')
+                                    medium_text += f"🟠 **{time}** - {name} ({country})\n"
+                                
+                                embed.add_field(
+                                    name="🟠 Medium Impact Events",
+                                    value=medium_text if medium_text else "Không có",
+                                    inline=False
+                                )
+                            
+                            # Thêm Low Impact events
+                            if low_impact:
+                                low_text = ""
+                                for event in low_impact[:5]:
+                                    time = event.get('time', 'TBA')
+                                    name = event.get('event', 'Unknown')
+                                    country = event.get('country', 'N/A')
+                                    low_text += f"🟢 **{time}** - {name} ({country})\n"
+                                
+                                embed.add_field(
+                                    name="🟢 Low Impact Events",
+                                    value=low_text if low_text else "Không có",
+                                    inline=False
+                                )
+                            
+                            # Set author
+                            embed.set_author(
+                                name="Investing.com Economic Calendar",
+                                icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
+                            )
+                            
+                            # Footer
+                            embed.set_footer(
+                                text=f"📊 Tổng: {len(events)} sự kiện • Cập nhật lúc {now.strftime('%H:%M')} (UTC+7)",
+                                icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
+                            )
+                            
+                            await channel.send(embed=embed)
+                            print(f"✅ Đã gửi lịch Economic Calendar cho guild {guild.name}")
+                        else:
+                            print(f"⚠️ Không có events cho guild {guild.name}")
+                            
+            except Exception as e:
+                print(f"Lỗi khi gửi daily calendar cho guild {guild.id}: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    @daily_calendar_summary.before_loop
+    async def before_daily_calendar_summary(self):
+        """Đợi bot sẵn sàng trước khi chạy task"""
+        await self.bot.wait_until_ready()
+
+async def setup(bot):
+    """Setup function để load cog"""
+    await bot.add_cog(NewsCog(bot))
