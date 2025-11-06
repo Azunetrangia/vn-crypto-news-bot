@@ -1,9 +1,11 @@
 # 🤖 Discord News Bot
 
-Bot Discord chuyên nghiệp cho tin tức tự động với dịch tiếng Việt:
-- 📰 **Trạm Tin tức Tự động**: Thu thập tin từ Messari, Santiment APIs và RSS Feeds
-- 🌐 **Dịch tự động**: Tự động dịch tin tức nước ngoài sang tiếng Việt
-- 🎨 **Giao diện đẹp**: Embed màu sắc, hình ảnh, emoji phong phú
+Bot Discord chuyên nghiệp tổng hợp tin tức kinh tế & crypto tự động với timezone UTC+7:
+- 📰 **Tin tức Đa nguồn**: Messari, Santiment, 5phutcrypto, RSS Feeds
+- 📅 **Economic Calendar**: Lịch kinh tế từ Investing.com (UTC+7)
+- 🌐 **Dịch tự động**: Tự động dịch tin nước ngoài sang tiếng Việt
+- 🎨 **Multi-guild Support**: Hỗ trợ nhiều Discord servers cùng lúc
+- 🕐 **Timezone UTC+7**: Hiển thị giờ Việt Nam cho tất cả events
 
 ## ✨ Tính năng nổi bật
 
