@@ -103,6 +103,14 @@ class ChannelSelectView(discord.ui.View):
                 view=None
             )
             
+        elif self.source_type == 'theblock':
+            config['theblock_channel'] = channel.id
+            await interaction.response.edit_message(
+                content=f"✅ Đã cài đặt kênh tin The Block: {channel.mention}",
+                embed=None,
+                view=None
+            )
+            
         elif self.source_type == 'economic_calendar':
             config['economic_calendar_channel'] = channel.id
             await interaction.response.edit_message(
@@ -456,6 +464,12 @@ class NewsMenuView(discord.ui.View):
                 value="5phutcrypto"
             ),
             discord.SelectOption(
+                label="Cài đặt kênh tin The Block",
+                description="Chọn kênh để nhận tin từ The Block",
+                emoji="📰",
+                value="theblock"
+            ),
+            discord.SelectOption(
                 label="Thêm một RSS Feed mới",
                 description="Thêm nguồn RSS Feed tùy chỉnh",
                 emoji="➕",
@@ -529,6 +543,16 @@ class NewsMenuView(discord.ui.View):
                 title="💰 Cài đặt kênh tin 5 Phút Crypto",
                 description="Chọn kênh để nhận tin tức từ 5phutcrypto.io",
                 color=discord.Color.orange()
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+        elif value == "theblock":
+            # Hiển thị ChannelSelect cho The Block
+            view = ChannelSelectView(cog, 'theblock')
+            embed = discord.Embed(
+                title="📰 Cài đặt kênh tin The Block",
+                description="Chọn kênh để nhận tin tức từ The Block (institutional-grade crypto news)",
+                color=0x1E1E1E  # Màu đen của The Block
             )
             await interaction.response.edit_message(embed=embed, view=view)
             
@@ -632,6 +656,29 @@ class NewsMenuView(discord.ui.View):
                     embed.add_field(
                         name="💰 5 Phút Crypto",
                         value=f"⚠️ Kênh không tìm thấy hoặc bot không có quyền truy cập\nID: `{config['5phutcrypto_channel']}`",
+                        inline=False
+                    )
+            
+            # The Block
+            if config.get('theblock_channel'):
+                channel = interaction.guild.get_channel(config['theblock_channel'])
+                if not channel:
+                    # Thử fetch từ bot
+                    try:
+                        channel = await interaction.client.fetch_channel(config['theblock_channel'])
+                    except:
+                        channel = None
+                
+                if channel:
+                    embed.add_field(
+                        name="📰 The Block",
+                        value=f"Kênh: {channel.mention}\nID: `{config['theblock_channel']}`",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="📰 The Block",
+                        value=f"⚠️ Kênh không tìm thấy hoặc bot không có quyền truy cập\nID: `{config['theblock_channel']}`",
                         inline=False
                     )
             
@@ -859,6 +906,7 @@ class NewsCog(commands.Cog):
                 "messari_channel": None,
                 "santiment_channel": None,
                 "5phutcrypto_channel": None,
+                "theblock_channel": None,
                 "economic_calendar_channel": None,
                 "rss_feeds": []
             }
@@ -867,6 +915,7 @@ class NewsCog(commands.Cog):
                 "messari_channel": None,
                 "santiment_channel": None,
                 "5phutcrypto_channel": None,
+                "theblock_channel": None,
                 "economic_calendar_channel": None,
                 "rss_feeds": []
             }
@@ -920,6 +969,7 @@ class NewsCog(commands.Cog):
                         "messari": [],
                         "santiment": [],
                         "5phutcrypto": [],
+                        "theblock": [],
                         "economic_events": [],
                         "rss": {}
                     }
@@ -930,6 +980,7 @@ class NewsCog(commands.Cog):
                 "messari": [],
                 "santiment": [],
                 "5phutcrypto": [],
+                "theblock": [],
                 "economic_events": [],
                 "rss": {}
             }
@@ -938,6 +989,7 @@ class NewsCog(commands.Cog):
                 "messari": [],
                 "santiment": [],
                 "5phutcrypto": [],
+                "theblock": [],
                 "economic_events": [],
                 "rss": {}
             }
@@ -1063,6 +1115,32 @@ class NewsCog(commands.Cog):
                 return articles
         except Exception as e:
             print(f"Lỗi khi lấy tin Glassnode: {e}")
+        
+        return []
+    
+    async def fetch_theblock_news(self):
+        """Lấy tin tức từ The Block RSS feed"""
+        try:
+            url = 'https://www.theblock.co/rss.xml'
+            
+            # Sử dụng feedparser trong executor để không block
+            loop = asyncio.get_event_loop()
+            feed = await loop.run_in_executor(None, feedparser.parse, url)
+            
+            if feed.entries:
+                articles = []
+                for entry in feed.entries[:5]:  # Lấy 5 tin mới nhất
+                    article = {
+                        'id': entry.get('link', entry.get('id', '')),
+                        'title': entry.get('title', 'Không có tiêu đề'),
+                        'url': entry.get('link', ''),
+                        'description': entry.get('description', '') or entry.get('summary', ''),
+                        'published_at': entry.get('published', ''),
+                    }
+                    articles.append(article)
+                return articles
+        except Exception as e:
+            print(f"Lỗi khi lấy tin The Block: {e}")
         
         return []
     
@@ -1609,6 +1687,59 @@ class NewsCog(commands.Cog):
                                 last_posts['5phutcrypto'].append(article_id)
                                 if len(last_posts['5phutcrypto']) > 100:
                                     last_posts['5phutcrypto'] = last_posts['5phutcrypto'][-100:]
+                
+                # Kiểm tra The Block
+                if config.get('theblock_channel'):
+                    channel = self.bot.get_channel(config['theblock_channel'])
+                    if channel:
+                        articles = await self.fetch_theblock_news()
+                        
+                        if not articles:
+                            print(f"⚠️ The Block không trả về dữ liệu")
+                        
+                        for article in articles:
+                            article_id = article.get('id')
+                            if article_id not in last_posts['theblock']:
+                                # Lấy nội dung gốc
+                                original_title = article.get('title', 'Không có tiêu đề')
+                                original_description = article.get('description', '')
+                                
+                                # Strip HTML tags từ description
+                                soup = BeautifulSoup(original_description, 'html.parser')
+                                clean_description = soup.get_text()[:400]
+                                
+                                # Dịch sang tiếng Việt
+                                translated_title = await self.translate_to_vietnamese(original_title, 250)
+                                translated_description = await self.translate_to_vietnamese(clean_description, 400) if clean_description else ""
+                                
+                                # Đăng tin mới với thiết kế đẹp - chỉ bản dịch
+                                embed = discord.Embed(
+                                    title=f"📰 {translated_title}",
+                                    url=article.get('url', ''),
+                                    description=translated_description,
+                                    color=0x1E1E1E,  # Màu đen The Block
+                                    timestamp=datetime.now(VN_TZ)
+                                )
+                                
+                                # Thêm author info với Google Favicon
+                                embed.set_author(
+                                    name="The Block",
+                                    icon_url="https://www.google.com/s2/favicons?domain=theblock.co&sz=128"
+                                )
+                                
+                                # Footer với icon
+                                embed.set_footer(
+                                    text="📰 Nguồn: The Block • Institutional-grade Crypto News • Đã dịch tự động",
+                                    icon_url="https://www.google.com/s2/favicons?domain=theblock.co&sz=128"
+                                )
+                                
+                                await channel.send(embed=embed)
+                                
+                                # Lưu ID
+                                last_posts['theblock'].append(article_id)
+                                # Giữ tối đa 100 IDs
+                                if len(last_posts['theblock']) > 100:
+                                    last_posts['theblock'] = last_posts['theblock'][-100:]
                 
                 # Kiểm tra Economic Calendar (FRED Data)
                 if config.get('economic_calendar_channel'):
