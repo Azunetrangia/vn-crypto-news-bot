@@ -869,14 +869,25 @@ class NewsCog(commands.Cog):
         self.temp_rss_data = {}  # Lưu tạm data khi thêm RSS
         self.translator = GoogleTranslator(source='auto', target='vi')  # Khởi tạo Google Translator
         
+        # Economic Calendar scheduled tasks tracking
+        self.scheduled_events = {}  # {event_id: {'pre_alert_posted': bool, 'actual_posted': bool}}
+        self.event_tasks = []  # List of scheduled asyncio tasks
+        
         # Khởi động background tasks
         self.news_checker.start()
         self.daily_calendar_summary.start()
+        self.economic_calendar_scheduler.start()  # New: Dynamic scheduler
         
     def cog_unload(self):
         """Dừng task khi cog unload"""
         self.news_checker.cancel()
         self.daily_calendar_summary.cancel()
+        self.economic_calendar_scheduler.cancel()
+        
+        # Cancel all scheduled event tasks
+        for task in self.event_tasks:
+            if not task.done():
+                task.cancel()
         
     def load_news_config(self, guild_id=None):
         """Load cấu hình tin tức cho guild cụ thể"""
@@ -2116,6 +2127,215 @@ class NewsCog(commands.Cog):
         """Đợi bot sẵn sàng trước khi chạy task"""
         await self.bot.wait_until_ready()
     
+    # ==================== ECONOMIC CALENDAR DYNAMIC SCHEDULER ====================
+    
+    @tasks.loop(hours=24)
+    async def economic_calendar_scheduler(self):
+        """
+        Chạy mỗi ngày lúc 00:00 UTC+7 để:
+        1. Reset tracking
+        2. Fetch tất cả events trong ngày
+        3. Schedule dynamic tasks cho mỗi event
+        """
+        try:
+            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+            now = datetime.now(VN_TZ)
+            print(f"🗓️ Economic Calendar Scheduler starting at {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Cancel all existing scheduled tasks
+            for task in self.event_tasks:
+                if not task.done():
+                    task.cancel()
+            self.event_tasks.clear()
+            
+            # Reset tracking
+            self.scheduled_events.clear()
+            
+            # Fetch all events for today (no alert window)
+            events = await self.fetch_economic_calendar(use_alert_window=False)
+            
+            if not events:
+                print("⚠️ No economic events found for today")
+                return
+            
+            print(f"📊 Fetched {len(events)} events for scheduling")
+            
+            # Schedule tasks for each event
+            for event in events:
+                impact = event.get('impact', 'Low')
+                
+                # Only schedule Medium and High impact events
+                if impact not in ['Medium', 'High']:
+                    continue
+                
+                event_id = event.get('id')
+                event_time_str = event.get('time', '')
+                
+                if not event_time_str or event_time_str == 'All Day' or event_time_str == 'Tentative':
+                    continue
+                
+                try:
+                    # Parse event time
+                    event_time = datetime.strptime(event_time_str, '%H:%M').replace(
+                        year=now.year, month=now.month, day=now.day, tzinfo=VN_TZ
+                    )
+                    
+                    # Initialize tracking
+                    self.scheduled_events[event_id] = {
+                        'pre_alert_posted': False,
+                        'actual_posted': False,
+                        'event': event
+                    }
+                    
+                    # Schedule pre-alert (5 minutes before)
+                    pre_alert_time = event_time - timedelta(minutes=5)
+                    if pre_alert_time > now:
+                        task = asyncio.create_task(
+                            self._schedule_pre_alert(event, pre_alert_time)
+                        )
+                        self.event_tasks.append(task)
+                        print(f"  ⏰ Scheduled pre-alert for {event.get('event_name')} at {pre_alert_time.strftime('%H:%M')}")
+                    
+                    # Schedule actual value checks (at event time, +5min, +10min)
+                    for offset_minutes in [0, 5, 10]:
+                        check_time = event_time + timedelta(minutes=offset_minutes)
+                        if check_time > now:
+                            task = asyncio.create_task(
+                                self._schedule_actual_check(event, check_time, is_first=(offset_minutes == 0))
+                            )
+                            self.event_tasks.append(task)
+                            print(f"  📊 Scheduled actual check for {event.get('event_name')} at {check_time.strftime('%H:%M')}")
+                    
+                except Exception as e:
+                    print(f"❌ Error scheduling event {event.get('event_name')}: {e}")
+                    continue
+            
+            print(f"✅ Scheduled {len(self.event_tasks)} tasks for today's events")
+            
+        except Exception as e:
+            print(f"❌ Economic Calendar Scheduler error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    @economic_calendar_scheduler.before_loop
+    async def before_economic_calendar_scheduler(self):
+        """Đợi bot sẵn sàng và đợi đến 00:00 UTC+7"""
+        await self.bot.wait_until_ready()
+        
+        VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+        now = datetime.now(VN_TZ)
+        
+        # Tính thời gian đến 00:00 ngày mai
+        tomorrow = now + timedelta(days=1)
+        next_midnight = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        wait_seconds = (next_midnight - now).total_seconds()
+        
+        print(f"⏰ Economic Calendar Scheduler will start at {next_midnight.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"⏰ Waiting {wait_seconds:.0f} seconds...")
+        
+        await asyncio.sleep(wait_seconds)
+    
+    async def _schedule_pre_alert(self, event, pre_alert_time):
+        """Schedule và post pre-alert cho event"""
+        try:
+            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+            now = datetime.now(VN_TZ)
+            
+            # Wait until pre_alert_time
+            wait_seconds = (pre_alert_time - now).total_seconds()
+            if wait_seconds > 0:
+                await asyncio.sleep(wait_seconds)
+            
+            event_id = event.get('id')
+            
+            # Check if already posted
+            if self.scheduled_events.get(event_id, {}).get('pre_alert_posted'):
+                return
+            
+            # Post pre-alert to all configured guilds
+            for guild in self.bot.guilds:
+                config = self.load_news_config(guild.id)
+                
+                if config and config.get('economic_calendar_channel'):
+                    channel = self.bot.get_channel(config['economic_calendar_channel'])
+                    
+                    if channel:
+                        await self.send_economic_event_update(channel, event, is_update=False)
+                        print(f"⏰ Posted pre-alert for {event.get('event_name')} to {guild.name}")
+            
+            # Mark as posted
+            if event_id in self.scheduled_events:
+                self.scheduled_events[event_id]['pre_alert_posted'] = True
+            
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"❌ Error in _schedule_pre_alert: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _schedule_actual_check(self, event, check_time, is_first=False):
+        """Schedule và check actual value tại check_time"""
+        try:
+            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+            now = datetime.now(VN_TZ)
+            
+            # Wait until check_time
+            wait_seconds = (check_time - now).total_seconds()
+            if wait_seconds > 0:
+                await asyncio.sleep(wait_seconds)
+            
+            event_id = event.get('id')
+            
+            # Check if already posted actual
+            if self.scheduled_events.get(event_id, {}).get('actual_posted'):
+                return
+            
+            # Re-fetch event to get updated actual value
+            events = await self.fetch_economic_calendar(use_alert_window=False)
+            
+            # Find this specific event
+            updated_event = None
+            for e in events:
+                if e.get('id') == event_id:
+                    updated_event = e
+                    break
+            
+            if not updated_event:
+                print(f"⚠️ Event {event.get('event_name')} not found in updated fetch")
+                return
+            
+            # Check if actual value exists
+            actual = updated_event.get('actual')
+            
+            if actual and actual != 'N/A':
+                # Post actual value to all configured guilds
+                for guild in self.bot.guilds:
+                    config = self.load_news_config(guild.id)
+                    
+                    if config and config.get('economic_calendar_channel'):
+                        channel = self.bot.get_channel(config['economic_calendar_channel'])
+                        
+                        if channel:
+                            await self.send_economic_event_update(channel, updated_event, is_update=True)
+                            print(f"✅ Posted actual value for {updated_event.get('event_name')} to {guild.name}")
+                
+                # Mark as posted
+                if event_id in self.scheduled_events:
+                    self.scheduled_events[event_id]['actual_posted'] = True
+            
+            else:
+                if is_first:
+                    print(f"⏳ No actual value yet for {event.get('event_name')}, will retry at next check")
+        
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"❌ Error in _schedule_actual_check: {e}")
+            import traceback
+            traceback.print_exc()
+    
     @commands.command(name='testcalendar')
     @commands.has_permissions(administrator=True)
     async def test_post_calendar(self, ctx):
@@ -2228,6 +2448,91 @@ class NewsCog(commands.Cog):
             
         except Exception as e:
             await ctx.send(f"❌ Lỗi: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    @commands.command(name='schedulenow')
+    @commands.has_permissions(administrator=True)
+    async def schedule_now(self, ctx):
+        """Command để trigger scheduler ngay lập tức (for testing)"""
+        await ctx.send("🗓️ Triggering Economic Calendar Scheduler...")
+        
+        try:
+            # Cancel all existing tasks
+            for task in self.event_tasks:
+                if not task.done():
+                    task.cancel()
+            self.event_tasks.clear()
+            self.scheduled_events.clear()
+            
+            # Run scheduler logic
+            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+            now = datetime.now(VN_TZ)
+            
+            # Fetch all events for today
+            events = await self.fetch_economic_calendar(use_alert_window=False)
+            
+            if not events:
+                await ctx.send("⚠️ No events found for today")
+                return
+            
+            await ctx.send(f"📊 Found {len(events)} events, scheduling tasks...")
+            
+            scheduled_count = 0
+            
+            # Schedule tasks for each event
+            for event in events:
+                impact = event.get('impact', 'Low')
+                
+                if impact not in ['Medium', 'High']:
+                    continue
+                
+                event_id = event.get('id')
+                event_time_str = event.get('time', '')
+                
+                if not event_time_str or event_time_str == 'All Day' or event_time_str == 'Tentative':
+                    continue
+                
+                try:
+                    # Parse event time
+                    event_time = datetime.strptime(event_time_str, '%H:%M').replace(
+                        year=now.year, month=now.month, day=now.day, tzinfo=VN_TZ
+                    )
+                    
+                    # Initialize tracking
+                    self.scheduled_events[event_id] = {
+                        'pre_alert_posted': False,
+                        'actual_posted': False,
+                        'event': event
+                    }
+                    
+                    # Schedule pre-alert (5 minutes before)
+                    pre_alert_time = event_time - timedelta(minutes=5)
+                    if pre_alert_time > now:
+                        task = asyncio.create_task(
+                            self._schedule_pre_alert(event, pre_alert_time)
+                        )
+                        self.event_tasks.append(task)
+                        scheduled_count += 1
+                    
+                    # Schedule actual value checks
+                    for offset_minutes in [0, 5, 10]:
+                        check_time = event_time + timedelta(minutes=offset_minutes)
+                        if check_time > now:
+                            task = asyncio.create_task(
+                                self._schedule_actual_check(event, check_time, is_first=(offset_minutes == 0))
+                            )
+                            self.event_tasks.append(task)
+                            scheduled_count += 1
+                
+                except Exception as e:
+                    print(f"Error scheduling {event.get('event_name')}: {e}")
+                    continue
+            
+            await ctx.send(f"✅ Scheduled {scheduled_count} tasks for {len([e for e in events if e.get('impact') in ['Medium', 'High']])} events!")
+            
+        except Exception as e:
+            await ctx.send(f"❌ Error: {str(e)}")
             import traceback
             traceback.print_exc()
 
