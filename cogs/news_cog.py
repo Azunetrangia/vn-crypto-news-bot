@@ -1801,6 +1801,8 @@ class NewsCog(commands.Cog):
                                     # Lấy title và description gốc
                                     original_title = entry.get('title', 'Không có tiêu đề')
                                     # Decode HTML entities (&#244; -> ô, &#225; -> á, etc.)
+                                    # VNEconomy có lỗi format: #225; thay vì &#225; nên phải fix
+                                    original_title = re.sub(r'#(\d+);', r'&#\1;', original_title)
                                     original_title = html.unescape(original_title)
                                     if len(original_title) > 250:
                                         original_title = original_title[:247] + '...'
@@ -1808,7 +1810,9 @@ class NewsCog(commands.Cog):
                                     # Mô tả với định dạng đẹp - loại bỏ HTML tags
                                     original_description = entry.get('summary', entry.get('description', ''))
                                     if original_description:
-                                        # Decode HTML entities trước
+                                        # Fix VNEconomy format error: #225; -> &#225;
+                                        original_description = re.sub(r'#(\d+);', r'&#\1;', original_description)
+                                        # Decode HTML entities
                                         original_description = html.unescape(original_description)
                                         # Loại bỏ tất cả HTML tags bằng regex
                                         original_description = re.sub(r'<[^>]+>', '', original_description)
