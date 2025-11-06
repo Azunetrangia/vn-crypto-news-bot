@@ -1392,12 +1392,14 @@ class NewsCog(commands.Cog):
                                     event_dt_vn_naive = event_dt_utc5 + timedelta(hours=12)
                                     event_dt_vn = vietnam_tz.localize(event_dt_vn_naive)
                                     
-                                    # Filter: Lấy events trong khoảng 5 phút trước -> tương lai
-                                    # Alert window: Đăng tin TRƯỚC 5 phút để user chuẩn bị
-                                    alert_window = now_vn - timedelta(minutes=5)
+                                    # Filter: Chỉ lấy events trong alert window (5 phút trước -> 10 phút tới)
+                                    # - Pre-alert: Post trước 5 phút để user chuẩn bị
+                                    # - Update: Post khi có actual value (trong vòng 5 phút sau event)
+                                    alert_start = now_vn - timedelta(minutes=5)  # 5 phút trước
+                                    alert_end = now_vn + timedelta(minutes=10)   # 10 phút tới
                                     
-                                    # Skip events quá cũ (trước 5 phút)
-                                    if event_dt_vn < alert_window:
+                                    # Skip events ngoài alert window
+                                    if event_dt_vn < alert_start or event_dt_vn > alert_end:
                                         continue
                                     
                                     # Format time for display with date if not today
