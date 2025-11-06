@@ -111,12 +111,12 @@ async def start_command(interaction: discord.Interaction):
     )
     embed.add_field(
         name="📰 Quản lý Tin tức",
-        value="Cấu hình và quản lý nguồn tin tự động (Messari, Santiment, RSS)\n• Tự động dịch sang tiếng Việt\n• Hỗ trợ RSS từ mọi nguồn\n• Kiểm tra tin mới mỗi 5 phút",
+        value="Cấu hình và quản lý nguồn tin tự động (Glassnode, Santiment, The Block, 5phutcrypto, RSS)\n• Tự động dịch sang tiếng Việt\n• Hỗ trợ RSS từ mọi nguồn\n• Kiểm tra tin mới mỗi 5 phút",
         inline=False
     )
     embed.add_field(
         name="📊 Economic Calendar",
-        value="Theo dõi lịch kinh tế và các chỉ số quan trọng\n• Dữ liệu từ Federal Reserve (FRED)\n• Real-time updates\n• 7 chỉ số kinh tế quan trọng",
+        value="Theo dõi lịch kinh tế và các chỉ số quan trọng\n• Dữ liệu từ Investing.com\n• Real-time updates\n• 7 chỉ số kinh tế quan trọng",
         inline=False
     )
     
