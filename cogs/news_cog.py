@@ -1566,8 +1566,6 @@ class NewsCog(commands.Cog):
     @tasks.loop(minutes=5)
     async def news_checker(self):
         """Background task kiểm tra tin tức mới mỗi 5 phút"""
-        await self.bot.wait_until_ready()
-        
         print(f"🔥 NEWS_CHECKER STARTED at {datetime.now(VN_TZ)}")
         print(f"🔥 Found {len(self.bot.guilds)} guilds to process")
         
@@ -1991,8 +1989,6 @@ class NewsCog(commands.Cog):
     @tasks.loop(hours=1)
     async def daily_calendar_summary(self):
         """Gửi lịch Economic Calendar vào 7h sáng UTC+7 mỗi ngày"""
-        await self.bot.wait_until_ready()
-        
         # Lấy giờ hiện tại theo UTC+7
         vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
         now = datetime.now(vietnam_tz)
