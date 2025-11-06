@@ -390,6 +390,63 @@ Nếu có vấn đề hoặc câu hỏi:
 - **docs/PROJECT_OVERVIEW.md** - Architecture & structure
 - **docs/CHANGELOG.md** - Version history
 
+## 📝 Changelog
+
+### Version 1.2.0 (November 6, 2025)
+
+#### 🎉 New Features
+- ✅ **The Block Integration**: Thêm nguồn tin The Block (institutional-grade crypto news)
+  - RSS feed: https://www.theblock.co/rss.xml
+  - Tự động dịch sang tiếng Việt
+  - Dedicated channel configuration
+
+#### 🐛 Bug Fixes
+- ✅ **VNEconomy HTML Entities Fix**: Sửa lỗi hiển thị tiếng Việt
+  - **Issue**: VNEconomy RSS feed sử dụng malformed HTML entities (`#225;` thay vì `&#225;`)
+  - **Solution**: Thêm regex preprocessing `r'#(\d+);'` → `r'&#\1;'` trước khi `html.unescape()`
+  - **Result**: Tiếng Việt hiển thị đúng (báo cáo, công ty, etc.)
+  - Áp dụng cho tất cả Vietnamese RSS feeds
+
+#### 🔄 API Changes
+- ✅ **Messari → Glassnode**: Thay thế Messari API (requires Enterprise plan)
+  - **Old**: Messari Research API (401 Unauthorized)
+  - **New**: Glassnode Insights RSS (free, high-quality on-chain analytics)
+  - Source: https://insights.glassnode.com/feed/
+
+- ✅ **Santiment GraphQL Fix**: Cập nhật query structure
+  - **Old**: `getNews` query (không tồn tại trong schema)
+  - **New**: `allInsights` query với `readyState` filter
+  - Working query với proper field selection
+
+#### 🏗️ Infrastructure
+- ✅ **Multi-guild Tracking**: Restructure `last_post_ids.json`
+  - Thêm guild ID key ở top-level
+  - Tracking riêng cho mỗi guild
+  - Thêm `theblock` tracking array
+  - Fix KeyError khi check The Block articles
+
+#### 📖 Documentation
+- ✅ Cập nhật README với tất cả nguồn tin mới
+- ✅ Cập nhật `/start` embed command
+- ✅ Thêm troubleshooting guide cho VNEconomy
+- ✅ Repository rename: `discord-market-bot` → `vn-crypto-news-bot`
+
+#### 🧪 Testing
+- ✅ Test script: `test_vneconomy_rss.py` - Verify HTML entities fix
+- ✅ Cleared VNEconomy tracking để force re-post articles
+- ✅ Verified Vietnamese characters display correctly
+
+### Version 1.1.0 (October 2025)
+- ✅ Multi-guild support
+- ✅ Economic Calendar (UTC+7)
+- ✅ 5phutcrypto.io integration
+- ✅ Auto translation with language detection
+
+### Version 1.0.0 (Initial Release)
+- ✅ Basic news aggregation
+- ✅ RSS feeds support
+- ✅ Discord slash commands
+
 ## 🎯 Features Roadmap
 
 ### Current (v1.0)
