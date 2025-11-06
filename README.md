@@ -1,7 +1,7 @@
 # 🤖 Discord News Bot
 
 Bot Discord chuyên nghiệp tổng hợp tin tức kinh tế & crypto tự động với timezone UTC+7:
-- 📰 **Tin tức Đa nguồn**: Glassnode, Santiment, 5phutcrypto, RSS Feeds
+- 📰 **Tin tức Đa nguồn**: Glassnode, Santiment, The Block, 5phutcrypto, RSS Feeds
 - 📅 **Economic Calendar**: Lịch kinh tế từ Investing.com (UTC+7)
 - 🌐 **Dịch tự động**: Tự động dịch tin nước ngoài sang tiếng Việt
 - 🎨 **Multi-guild Support**: Hỗ trợ nhiều Discord servers cùng lúc
@@ -141,7 +141,17 @@ Nhấn **[Quản lý Tin tức]** → Menu hiện ra:
 💡 Cách dùng: Chọn channel để nhận tin Việt Nam
 ```
 
-#### 📅 Cài đặt Economic Calendar
+#### � Cài đặt kênh The Block
+```
+🎯 Chức năng:
+  • Institutional-grade crypto news
+  • Tin tức chuyên sâu thị trường crypto
+  • 🌐 Tự động dịch sang tiếng Việt
+  
+💡 Cách dùng: Chọn channel để nhận tin The Block
+```
+
+#### �📅 Cài đặt Economic Calendar
 ```
 🎯 Chức năng:
   • Lịch kinh tế tự động từ Investing.com
@@ -210,7 +220,8 @@ Bot tự động kiểm tra và đăng tin mới mỗi **5 phút** ⏰:
 | 📊 **Glassnode** | On-chain analytics | 🌐 Có |
 | 🔗 **Santiment** | On-chain insights | 🌐 Có |
 | ⚡ **5phutcrypto** | Tin tiếng Việt | ❌ Không |
-| 📅 **Economic Calendar** | Lịch kinh tế (UTC+7) | ❌ Không |
+| � **The Block** | Institutional news | 🌐 Có |
+| �📅 **Economic Calendar** | Lịch kinh tế (UTC+7) | ❌ Không |
 | 📡 **RSS Feeds** | Nguồn tùy chỉnh | 🌐 Auto-detect |
 
 > **💡 Admin Tip**: Dùng lệnh `!testcalendar` để test Economic Calendar ngay lập tức (không cần đợi 5 phút)
@@ -264,6 +275,7 @@ Bot chạy background tasks tự động:
 - Kiểm tra Glassnode Insights RSS
 - Kiểm tra Santiment API
 - Kiểm tra 5phutcrypto.io
+- Kiểm tra The Block RSS
 - Kiểm tra tất cả RSS Feeds
 - Kiểm tra Economic Calendar (Investing.com)
 - So sánh với `last_post_ids` per-guild để chống trùng
@@ -288,6 +300,7 @@ Bot hỗ trợ nhiều Discord servers:
       "glassnode_channel": 123456789,
       "santiment_channel": 123456789,
       "5phutcrypto_channel": 123456789,
+      "theblock_channel": 123456789,
       "economic_calendar_channel": 123456789,
       "rss_feeds": [...]
     },
