@@ -400,4 +400,4 @@ Nếu có vấn đề hoặc câu hỏi:
 
 **Made with ❤️ for the Vietnamese crypto community**
 
-**Repository**: https://github.com/Azunetrangia/discord-market-bot
+**Repository**: https://github.com/Azunetrangia/vn-crypto-news-bot
