@@ -25,11 +25,11 @@ Bot Discord chuyên nghiệp tổng hợp tin tức kinh tế & crypto tự đ�
 - **Dynamic Scheduler**: Scheduled tasks post events at exact time (not polling)
 - **Investing.com scraper**: Lịch kinh tế tự động
 - **Timezone UTC+7**: Hiển thị giờ Việt Nam
-- **Pre-Alert System**: Thông báo trước 5 phút (⏰ Sắp diễn ra)
+- **Scheduling**: Daily summary at 07:00 UTC+7; per-event checks at T+0 / T+2 / T+5 with retry policy (no pre-alerts or backfill)
 - **Actual Value Tracking**: Check at T+0, T+5, T+10 minutes
 - **Smart Retry**: Chỉ post khi actual value tồn tại
 - **Filter Impact**: Chỉ High & Medium events
-- **Daily Reset**: Tự động reset lúc 00:00 UTC+7
+- **Daily Summary & Scheduler**: Gửi tổng hợp hàng ngày lúc 07:00 UTC+7 và tạo các kiểm tra per-event (T+0/T+2/T+5). Không sử dụng pre-alert/backfill.
 - Test commands: `!testcalendar`, `!schedulenow` (Admin only)
 
 ## 🚀 Cài đặt
@@ -200,7 +200,7 @@ Nhấn **[Economic Calendar]** để cấu hình lịch kinh tế:
   • Lịch kinh tế tự động từ Investing.com
   • 🕐 Hiển thị giờ UTC+7 (Việt Nam)
   • 🔴 High & 🟠 Medium impact events
-  • ⏰ Pre-alert 5 phút trước events
+  • ⏰ No pre-alerts. Bot sends a daily summary at 07:00 UTC+7 and performs per-event re-checks at T+0/T+2/T+5 minutes.
   • ✅ Post actual value ngay khi có
   • 🔄 Auto retry at T+5, T+10 minutes
   
@@ -218,7 +218,7 @@ Nhấn **[Economic Calendar]** để cấu hình lịch kinh tế:
 - Scheduler chạy mỗi ngày lúc 00:00 UTC+7
 - Tạo scheduled tasks cho từng event
 - Post chính xác vào đúng thời điểm (không polling)
-- Pre-alert 5 phút trước: ⏰ "Sắp diễn ra"
+- No pre-alerts: the bot will not post pre-event alerts. It posts a daily summary at 07:00 and then does targeted re-checks around each event time.
 - Actual value checks: T+0, T+5, T+10
 - Chỉ post khi actual value tồn tại
 
@@ -298,7 +298,7 @@ Bot chạy background tasks tự động:
 ### 📅 Economic Calendar Scheduler (Mỗi ngày lúc 00:00 UTC+7)
 - Fetch tất cả events trong ngày từ Investing.com
 - Tạo dynamic scheduled tasks cho mỗi event
-- **Pre-alert tasks**: Schedule thông báo trước 5 phút (⏰)
+- **Per-event checks**: The scheduler sets targeted checks at event time and shortly after (T+0, T+2, T+5). Retry policy: T+0 for all events, T+2 for Medium/High, T+5 for High only.
 - **Actual check tasks**: Schedule check tại T+0, T+5, T+10 (✅)
 - Chỉ post khi actual value tồn tại (không post "N/A")
 - Auto cancel và reset tasks mỗi ngày

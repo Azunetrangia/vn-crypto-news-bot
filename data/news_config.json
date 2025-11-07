@@ -7,8 +7,8 @@
       "economic_calendar_channel": 1435655719209664632,
       "rss_feeds": [
         {
-          "name": "Tin mới nhất - VnExpress RSS",
-          "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
+          "name": "Thời sự - VnExpress RSS",
+          "url": "https://vnexpress.net/rss/thoi-su.rss",
           "channel_id": 1435655410328670288
         },
         {

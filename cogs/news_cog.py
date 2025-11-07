@@ -215,8 +215,8 @@ class QuickSetupView(discord.ui.View):
         # Danh sách RSS feeds có sẵn
         preset_feeds = [
             {
-                "name": "Tin mới nhất - VnExpress RSS",
-                "url": "https://vnexpress.net/rss/tin-moi-nhat.rss"
+                "name": "Thời sự - VnExpress RSS",
+                "url": "https://vnexpress.net/rss/thoi-su.rss"
             },
             {
                 "name": "BBC News",
@@ -332,9 +332,9 @@ class PresetRSSSelectView(discord.ui.View):
             options=[
                 discord.SelectOption(
                     label="VnExpress - Tin mới nhất",
-                    description="https://vnexpress.net/rss/tin-moi-nhat.rss",
+                    description="https://vnexpress.net/rss/thoi-su.rss",
                     emoji="🇻🇳",
-                    value="https://vnexpress.net/rss/tin-moi-nhat.rss"
+                    value="https://vnexpress.net/rss/thoi-su.rss"
                 ),
                 discord.SelectOption(
                     label="BBC News",
@@ -379,7 +379,7 @@ class PresetRSSSelectView(discord.ui.View):
         
         # Map URL to name
         url_to_name = {
-            "https://vnexpress.net/rss/tin-moi-nhat.rss": "Tin mới nhất - VnExpress RSS",
+            "https://vnexpress.net/rss/thoi-su.rss": "Thời sự - VnExpress RSS",
             "https://feeds.bbci.co.uk/news/rss.xml": "BBC News",
             "https://cointelegraph.com/rss": "Cointelegraph.com News",
             "https://cointelegraph.com/rss/tag/blockchain": "Cointelegraph - Blockchain",
@@ -1346,27 +1346,223 @@ class NewsCog(commands.Cog):
             print(f"Lỗi khi gửi economic event: {e}")
             import traceback
             traceback.print_exc()
+    
+    async def send_daily_summary(self, channel, events):
+        """Gửi tổng quan lịch kinh tế hàng ngày (7:00 AM UTC+7)
+        Chia thành 4 time blocks: Morning, Afternoon, Evening, Night với table format
+        
+        Args:
+            channel: Discord channel to send to
+            events: List of events from fetch_economic_calendar
+        """
+        try:
+            vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+            now = datetime.now(vietnam_tz)
             
+            # Filter Medium/High impact only
+            filtered_events = [e for e in events if e.get('impact') in ['Medium', 'High']]
+            
+            if not filtered_events:
+                await channel.send("📅 Không có sự kiện kinh tế quan trọng nào hôm nay.")
+                return
+            
+            # Group events by time blocks
+            time_blocks = {
+                'morning': [],    # 07:00 - 11:59
+                'afternoon': [],  # 12:00 - 17:59
+                'evening': [],    # 18:00 - 23:59
+                'night': []       # 00:00 - 04:30 (next day)
+            }
+            
+            for event in filtered_events:
+                time_str = event.get('time', '')
+                try:
+                    # Parse time to determine block
+                    if '/' in time_str:
+                        # Format: dd/mm HH:MM (next day event)
+                        parsed = datetime.strptime(time_str, '%d/%m %H:%M')
+                        hour = parsed.hour
+                        # All next-day events go to night block
+                        time_blocks['night'].append(event)
+                    else:
+                        # Format: HH:MM (today event)
+                        parsed = datetime.strptime(time_str, '%H:%M')
+                        hour = parsed.hour
+                        
+                        if 7 <= hour < 12:
+                            time_blocks['morning'].append(event)
+                        elif 12 <= hour < 18:
+                            time_blocks['afternoon'].append(event)
+                        elif 18 <= hour < 24:
+                            time_blocks['evening'].append(event)
+                        else:  # 0 <= hour < 7
+                            time_blocks['night'].append(event)
+                except:
+                    # If parsing fails, put in morning by default
+                    time_blocks['morning'].append(event)
+            
+            # Prepare block metadata
+            block_info = {
+                'morning': {'emoji': '🌅', 'title': 'BUỔI SÁNG (07:00 - 11:59)', 'color': 0xFFD700},
+                'afternoon': {'emoji': '☀️', 'title': 'BUỔI CHIỀU (12:00 - 17:59)', 'color': 0xFF8C00},
+                'evening': {'emoji': '🌙', 'title': 'BUỔI TỐI (18:00 - 23:59)', 'color': 0x4169E1},
+                'night': {'emoji': '🌃', 'title': 'ĐÊM/SÁNG SỚM (00:00 - 04:30)', 'color': 0x483D8B}
+            }
+            
+            # Send intro message - clean and professional
+            intro_embed = discord.Embed(
+                title="📅 LỊCH KINH TẾ HÔM NAY",
+                description="",
+                color=0x2ECC71,  # Green color
+                timestamp=now
+            )
+            
+            # Add info fields
+            intro_embed.add_field(
+                name="📆 Ngày",
+                value=f"`{now.strftime('%d/%m/%Y')}`",
+                inline=True
+            )
+            
+            intro_embed.add_field(
+                name="⏰ Cập nhật lúc",
+                value=f"`{now.strftime('%H:%M')} UTC+7`",
+                inline=True
+            )
+            
+            intro_embed.add_field(
+                name="📊 Tổng số sự kiện",
+                value=f"`{len(filtered_events)} events`",
+                inline=True
+            )
+            
+            # Count by impact
+            high_total = len([e for e in filtered_events if e.get('impact') == 'High'])
+            med_total = len([e for e in filtered_events if e.get('impact') == 'Medium'])
+            
+            intro_embed.add_field(
+                name="� Phân loại Impact",
+                value=f"🔴 **High:** {high_total} events\n🟠 **Medium:** {med_total} events",
+                inline=False
+            )
+            
+            intro_embed.add_field(
+                name="🔔 Lưu ý",
+                value="Bot sẽ tự động đăng kết quả actual khi có công bố chính thức từ Investing.com",
+                inline=False
+            )
+            
+            intro_embed.set_footer(
+                text="📊 Investing.com Economic Calendar • Tự động cập nhật",
+                icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
+            )
+            
+            await channel.send(embed=intro_embed)
+            
+            # Send each time block
+            for block_key in ['morning', 'afternoon', 'evening', 'night']:
+                block_events = time_blocks[block_key]
+                if not block_events:
+                    continue
+                
+                info = block_info[block_key]
+                
+                # Count by impact
+                high_count = len([e for e in block_events if e.get('impact') == 'High'])
+                med_count = len([e for e in block_events if e.get('impact') == 'Medium'])
+                
+                # Create embed for this block
+                embed = discord.Embed(
+                    title=f"{info['emoji']} {info['title']}",
+                    description=f"**Tổng: {len(block_events)} sự kiện** (🔴 {high_count} High, 🟠 {med_count} Medium)\n",
+                    color=info['color']
+                )
+                
+                # Add each event as a field (max 25 fields per embed)
+                for evt in block_events[:25]:  # Discord limit: 25 fields
+                    time_display = evt.get('time', 'N/A')
+                    country = evt.get('country', 'N/A')
+                    event_name = evt.get('event', 'Unknown')
+                    impact = evt.get('impact', 'Low')
+                    
+                    # Impact icon
+                    if impact == 'High':
+                        impact_icon = '🔴'
+                    elif impact == 'Medium':
+                        impact_icon = '🟠'
+                    else:
+                        impact_icon = '🟢'
+                    
+                    # Get flag emoji for country
+                    country_flags = {
+                        'United States': '🇺🇸',
+                        'Euro Zone': '🇪🇺',
+                        'Germany': '🇩🇪',
+                        'United Kingdom': '🇬🇧',
+                        'Japan': '🇯🇵',
+                        'China': '🇨🇳',
+                        'Canada': '🇨🇦',
+                        'Australia': '🇦🇺',
+                        'Switzerland': '🇨🇭',
+                        'France': '🇫🇷',
+                        'Italy': '🇮🇹',
+                        'Spain': '🇪🇸',
+                    }
+                    flag = country_flags.get(country, '🌍')
+                    
+                    # Truncate long event names
+                    if len(event_name) > 45:
+                        event_name = event_name[:42] + "..."
+                    
+                    # Field name: Time + Impact
+                    field_name = f"{impact_icon} **{time_display}** | {flag} {country}"
+                    
+                    # Field value: Event name
+                    field_value = f"{event_name}"
+                    
+                    embed.add_field(
+                        name=field_name,
+                        value=field_value,
+                        inline=False
+                    )
+                
+                embed.set_footer(
+                    text=f"📊 {info['emoji']} {len(block_events)} events",
+                    icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
+                )
+                
+                await channel.send(embed=embed)
+                await asyncio.sleep(0.5)  # Small delay between embeds
+            
+            print(f"✅ Sent daily summary: {len(filtered_events)} events across {sum(1 for v in time_blocks.values() if v)} time blocks")
+            
+        except Exception as e:
+            print(f"❌ Error sending daily summary: {e}")
+            import traceback
             traceback.print_exc()
     
-    async def fetch_economic_calendar(self, use_alert_window=True):
+    async def fetch_economic_calendar(self, target_time=None):
         """Lấy dữ liệu kinh tế từ Investing.com (có đầy đủ Forecast/Actual/Previous)
         
         Args:
-            use_alert_window: Nếu True, chỉ lấy events trong [now-5min, now+10min] (cho background task)
-                            Nếu False, lấy TẤT CẢ events từ now → 23:59 (cho !testcalendar)
+            target_time: Nếu None, lấy TẤT CẢ events từ now → 4:30 AM ngày hôm sau
+                        Nếu có giá trị (datetime), chỉ lấy events trong khoảng ±5 phút của target_time
         """
         try:
             from bs4 import BeautifulSoup
             import aiohttp
             
-            # Get today's date in UTC+7
+            # Get today's and tomorrow's date in UTC+7
             vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
             today = datetime.now(vietnam_tz)
-            date_str = today.strftime('%Y-%m-%d')
+            tomorrow = today + timedelta(days=1)
             
-            # Use date filter to get today's events
-            url = f"https://www.investing.com/economic-calendar/?dateFrom={date_str}&dateTo={date_str}"
+            # Fetch both today and tomorrow to cover events until 4:30 AM next day
+            date_str_today = today.strftime('%Y-%m-%d')
+            date_str_tomorrow = tomorrow.strftime('%Y-%m-%d')
+            
+            # Use date filter to get events from both days
+            url = f"https://www.investing.com/economic-calendar/?dateFrom={date_str_today}&dateTo={date_str_tomorrow}"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -1408,23 +1604,29 @@ class NewsCog(commands.Cog):
                                     event_dt_vn_naive = event_dt_utc5 + timedelta(hours=12)
                                     event_dt_vn = vietnam_tz.localize(event_dt_vn_naive)
                                     
-                                    if use_alert_window:
-                                        # Background task: Chỉ lấy events trong window [now-5min, now+10min]
-                                        # - Pre-alert: Post trước 5 phút để user chuẩn bị
-                                        # - Update: Post khi có actual value (trong vòng 5 phút sau event)
-                                        alert_start = now_vn - timedelta(minutes=5)  # 5 phút trước
-                                        alert_end = now_vn + timedelta(minutes=10)   # 10 phút tới
-                                        
-                                        # Skip events ngoài alert window
-                                        if event_dt_vn < alert_start or event_dt_vn > alert_end:
+                                    # Determine filter behavior based on target_time
+                                    if target_time:
+                                        # Targeted fetch: Only get events within ±5 min of target_time (for actual checks)
+                                        time_diff = abs((event_dt_vn - target_time).total_seconds())
+                                        if time_diff > 300:  # 5 minutes = 300 seconds
                                             continue
                                     else:
-                                        # !testcalendar: Lấy TẤT CẢ events từ now → 23:59
-                                        # Chỉ skip events ĐÃ QUA
-                                        if event_dt_vn < now_vn:
+                                        # Daily summary fetch: Get all events from now until 4:30 AM next day
+                                        now_vn = datetime.now(vietnam_tz)
+                                        
+                                        # Calculate end time: 4:30 AM next day
+                                        next_day = now_vn + timedelta(days=1)
+                                        end_time = vietnam_tz.localize(datetime(next_day.year, next_day.month, next_day.day, 4, 30))
+                                        
+                                        # Skip events that already passed or are beyond 4:30 AM tomorrow
+                                        if event_dt_vn < now_vn or event_dt_vn > end_time:
                                             continue
                                     
-                                    # Format time for display with date if not today
+                                    # Format time for display
+                                    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+                                    now_vn = datetime.now(vietnam_tz)
+                                    today_vn = now_vn.date()
+                                    
                                     if event_dt_vn.date() == today_vn:
                                         time_str = event_dt_vn.strftime('%H:%M')
                                     else:
@@ -1625,8 +1827,9 @@ class NewsCog(commands.Cog):
                                 translated_description = await self.translate_to_vietnamese(clean_description, 400) if clean_description else ""
                                 
                                 # Đăng tin mới với thiết kế đẹp - chỉ bản dịch
+                                # Use a clear emoji instead of a replacement character
                                 embed = discord.Embed(
-                                    title=f"� {translated_title}",
+                                    title=f"📊 {translated_title}",
                                     url=article.get('url', ''),
                                     description=translated_description,
                                     color=0x5B8DEE,  # Xanh dương Glassnode
@@ -2106,15 +2309,14 @@ class NewsCog(commands.Cog):
     @tasks.loop(hours=24)
     async def economic_calendar_scheduler(self):
         """
-        Chạy mỗi ngày lúc 00:00 UTC+7 để:
-        1. Reset tracking
-        2. Fetch tất cả events trong ngày
-        3. Schedule dynamic tasks cho mỗi event
+        Chạy mỗi ngày lúc 07:00 UTC+7 để:
+        1. Gửi daily summary (lịch trình events từ 7:00 → 4:30 sáng hôm sau)
+        2. Schedule event checks cho mỗi event
         """
         try:
             VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
             now = datetime.now(VN_TZ)
-            print(f"🗓️ Economic Calendar Scheduler starting at {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"� Economic Calendar Scheduler running at {now.strftime('%Y-%m-%d %H:%M:%S')}")
             
             # Cancel all existing scheduled tasks
             for task in self.event_tasks:
@@ -2125,66 +2327,73 @@ class NewsCog(commands.Cog):
             # Reset tracking
             self.scheduled_events.clear()
             
-            # Fetch all events for today (no alert window)
-            events = await self.fetch_economic_calendar(use_alert_window=False)
+            # Fetch all events from now until 4:30 AM tomorrow
+            events = await self.fetch_economic_calendar(target_time=None)
             
             if not events:
-                print("⚠️ No economic events found for today")
+                print("⚠️ No economic events found")
                 return
             
-            print(f"📊 Fetched {len(events)} events for scheduling")
+            print(f"📊 Fetched {len(events)} events for today")
             
-            # Schedule tasks for each event
-            for event in events:
-                impact = event.get('impact', 'Low')
+            # Filter Medium/High impact
+            important_events = [e for e in events if e.get('impact') in ['Medium', 'High']]
+            print(f"✅ {len(important_events)} Medium/High impact events to schedule")
+            
+            # Step 1: Send daily summary to all configured guilds
+            for guild in self.bot.guilds:
+                config = self.load_news_config(guild.id)
                 
-                # Only schedule Medium and High impact events
-                if impact not in ['Medium', 'High']:
-                    continue
-                
+                if config and config.get('economic_calendar_channel'):
+                    channel = self.bot.get_channel(config['economic_calendar_channel'])
+                    
+                    if channel:
+                        await self.send_daily_summary(channel, events)
+                        print(f"📬 Sent daily summary to {guild.name}")
+            
+            # Step 2: Schedule event checks for each important event
+            for event in important_events:
                 event_id = event.get('id')
                 event_time_str = event.get('time', '')
+                event_name = event.get('event', 'Unknown')
                 
-                if not event_time_str or event_time_str == 'All Day' or event_time_str == 'Tentative':
+                if not event_time_str or event_time_str in ('All Day', 'Tentative'):
                     continue
                 
                 try:
-                    # Parse event time
-                    event_time = datetime.strptime(event_time_str, '%H:%M').replace(
-                        year=now.year, month=now.month, day=now.day, tzinfo=VN_TZ
-                    )
+                    # Parse event time to datetime
+                    if '/' in event_time_str:
+                        # Format: dd/mm HH:MM (next day)
+                        dt = datetime.strptime(event_time_str, '%d/%m %H:%M')
+                        event_time_naive = datetime(year=now.year, month=dt.month, day=dt.day, hour=dt.hour, minute=dt.minute)
+                    else:
+                        # Format: HH:MM (today)
+                        parsed = datetime.strptime(event_time_str, '%H:%M')
+                        event_time_naive = datetime(year=now.year, month=now.month, day=now.day, hour=parsed.hour, minute=parsed.minute)
+                    
+                    # Localize to Vietnam timezone
+                    event_time = VN_TZ.localize(event_time_naive)
+                    
+                    # If event already passed today, assume it's for tomorrow
+                    if event_time < now:
+                        event_time = event_time + timedelta(days=1)
                     
                     # Initialize tracking
                     self.scheduled_events[event_id] = {
-                        'pre_alert_posted': False,
                         'actual_posted': False,
                         'event': event
                     }
                     
-                    # Schedule pre-alert (5 minutes before)
-                    pre_alert_time = event_time - timedelta(minutes=5)
-                    if pre_alert_time > now:
-                        task = asyncio.create_task(
-                            self._schedule_pre_alert(event, pre_alert_time)
-                        )
-                        self.event_tasks.append(task)
-                        print(f"  ⏰ Scheduled pre-alert for {event.get('event_name')} at {pre_alert_time.strftime('%H:%M')}")
-                    
-                    # Schedule actual value checks (at event time, +5min, +10min)
-                    for offset_minutes in [0, 5, 10]:
-                        check_time = event_time + timedelta(minutes=offset_minutes)
-                        if check_time > now:
-                            task = asyncio.create_task(
-                                self._schedule_actual_check(event, check_time, is_first=(offset_minutes == 0))
-                            )
-                            self.event_tasks.append(task)
-                            print(f"  📊 Scheduled actual check for {event.get('event_name')} at {check_time.strftime('%H:%M')}")
+                    # Schedule the check task
+                    task = asyncio.create_task(self._check_and_post_event(event, event_time))
+                    self.event_tasks.append(task)
+                    print(f"  � Scheduled checks for {event_name} at {event_time.strftime('%H:%M')}")
                     
                 except Exception as e:
-                    print(f"❌ Error scheduling event {event.get('event_name')}: {e}")
+                    print(f"❌ Error scheduling {event_name}: {e}")
                     continue
             
-            print(f"✅ Scheduled {len(self.event_tasks)} tasks for today's events")
+            print(f"✅ Scheduled {len(self.event_tasks)} event check tasks")
             
         except Exception as e:
             print(f"❌ Economic Calendar Scheduler error: {e}")
@@ -2193,127 +2402,118 @@ class NewsCog(commands.Cog):
     
     @economic_calendar_scheduler.before_loop
     async def before_economic_calendar_scheduler(self):
-        """Đợi bot sẵn sàng và đợi đến 00:00 UTC+7"""
+        """Đợi bot sẵn sàng và đợi đến 07:00 UTC+7"""
         await self.bot.wait_until_ready()
         
         VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
         now = datetime.now(VN_TZ)
         
-        # Tính thời gian đến 00:00 ngày mai
-        tomorrow = now + timedelta(days=1)
-        next_midnight = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Calculate next 7:00 AM
+        target_hour = 7
+        if now.hour >= target_hour:
+            # Already past 7 AM today, schedule for tomorrow 7 AM
+            next_run = now + timedelta(days=1)
+            next_run = next_run.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        else:
+            # Before 7 AM today, schedule for today 7 AM
+            next_run = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
         
-        wait_seconds = (next_midnight - now).total_seconds()
+        wait_seconds = (next_run - now).total_seconds()
         
-        print(f"⏰ Economic Calendar Scheduler will start at {next_midnight.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"⏰ Waiting {wait_seconds:.0f} seconds...")
+        print(f"⏰ Economic Calendar Scheduler initialized at {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"⏰ Next run scheduled for {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"⏰ Waiting {wait_seconds:.0f} seconds ({wait_seconds/3600:.1f} hours)...")
         
         await asyncio.sleep(wait_seconds)
     
-    async def _schedule_pre_alert(self, event, pre_alert_time):
-        """Schedule và post pre-alert cho event"""
-        try:
-            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
-            now = datetime.now(VN_TZ)
-            
-            # Wait until pre_alert_time
-            wait_seconds = (pre_alert_time - now).total_seconds()
-            if wait_seconds > 0:
-                await asyncio.sleep(wait_seconds)
-            
-            event_id = event.get('id')
-            
-            # Check if already posted
-            if self.scheduled_events.get(event_id, {}).get('pre_alert_posted'):
-                return
-            
-            # Post pre-alert to all configured guilds
-            for guild in self.bot.guilds:
-                config = self.load_news_config(guild.id)
-                
-                if config and config.get('economic_calendar_channel'):
-                    channel = self.bot.get_channel(config['economic_calendar_channel'])
-                    
-                    if channel:
-                        await self.send_economic_event_update(channel, event, is_update=False)
-                        print(f"⏰ Posted pre-alert for {event.get('event_name')} to {guild.name}")
-            
-            # Mark as posted
-            if event_id in self.scheduled_events:
-                self.scheduled_events[event_id]['pre_alert_posted'] = True
-            
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print(f"❌ Error in _schedule_pre_alert: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    async def _schedule_actual_check(self, event, check_time, is_first=False):
-        """Schedule và check actual value tại check_time"""
-        try:
-            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
-            now = datetime.now(VN_TZ)
-            
-            # Wait until check_time
-            wait_seconds = (check_time - now).total_seconds()
-            if wait_seconds > 0:
-                await asyncio.sleep(wait_seconds)
-            
-            event_id = event.get('id')
-            
-            # Check if already posted actual
-            if self.scheduled_events.get(event_id, {}).get('actual_posted'):
-                return
-            
-            # Re-fetch event to get updated actual value
-            events = await self.fetch_economic_calendar(use_alert_window=False)
-            
-            # Find this specific event
-            updated_event = None
-            for e in events:
-                if e.get('id') == event_id:
-                    updated_event = e
-                    break
-            
-            if not updated_event:
-                print(f"⚠️ Event {event.get('event_name')} not found in updated fetch")
-                return
-            
-            # Check if actual value exists
-            actual = updated_event.get('actual')
-            
-            if actual and actual != 'N/A':
-                # Post actual value to all configured guilds
-                for guild in self.bot.guilds:
-                    config = self.load_news_config(guild.id)
-                    
-                    if config and config.get('economic_calendar_channel'):
-                        channel = self.bot.get_channel(config['economic_calendar_channel'])
-                        
-                        if channel:
-                            await self.send_economic_event_update(channel, updated_event, is_update=True)
-                            print(f"✅ Posted actual value for {updated_event.get('event_name')} to {guild.name}")
-                
-                # Mark as posted
-                if event_id in self.scheduled_events:
-                    self.scheduled_events[event_id]['actual_posted'] = True
-            
-            else:
-                if is_first:
-                    print(f"⏳ No actual value yet for {event.get('event_name')}, will retry at next check")
+    async def _check_and_post_event(self, event, event_time):
+        """Check and post event with retry logic
         
+        Retry strategy (Option 3 - Hybrid):
+        - T+0: First check (all impacts)
+        - T+2: Retry if no data (Medium/High only)
+        - T+5: Final retry (High only)
+        
+        Args:
+            event: Event dict with id, time, impact, etc.
+            event_time: datetime object of when event occurs (UTC+7)
+        """
+        try:
+            VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+            event_id = event.get('id')
+            impact = event.get('impact', 'Low')
+            event_name = event.get('event', 'Unknown')
+            
+            # Check times based on impact
+            check_times = [0]  # T+0 for all
+            if impact in ['Medium', 'High']:
+                check_times.append(2)  # T+2 for Medium/High
+            if impact == 'High':
+                check_times.append(5)  # T+5 for High only
+            
+            for offset_minutes in check_times:
+                check_time = event_time + timedelta(minutes=offset_minutes)
+                now = datetime.now(VN_TZ)
+                
+                # Wait until check_time
+                wait_seconds = (check_time - now).total_seconds()
+                if wait_seconds > 0:
+                    await asyncio.sleep(wait_seconds)
+                
+                # Check if already posted
+                if self.scheduled_events.get(event_id, {}).get('actual_posted'):
+                    print(f"✅ Event {event_name} already posted, skipping further checks")
+                    return
+                
+                # Re-fetch data for this specific event
+                print(f"🔍 Checking event {event_name} at T+{offset_minutes} min...")
+                updated_events = await self.fetch_economic_calendar(target_time=event_time)
+                
+                # Find this specific event in updated data
+                updated_event = None
+                for e in updated_events:
+                    if e.get('id') == event_id:
+                        updated_event = e
+                        break
+                
+                if not updated_event:
+                    print(f"⚠️ Event {event_name} not found in re-fetch")
+                    continue
+                
+                # Check if actual value exists
+                actual = updated_event.get('actual', 'N/A')
+                
+                if actual and actual != 'N/A':
+                    # Post to all configured guilds
+                    for guild in self.bot.guilds:
+                        config = self.load_news_config(guild.id)
+                        
+                        if config and config.get('economic_calendar_channel'):
+                            channel = self.bot.get_channel(config['economic_calendar_channel'])
+                            
+                            if channel:
+                                await self.send_economic_event_update(channel, updated_event, is_update=True)
+                                print(f"✅ Posted actual for {event_name} ({impact}) to {guild.name} at T+{offset_minutes}")
+                    
+                    # Mark as posted
+                    if event_id in self.scheduled_events:
+                        self.scheduled_events[event_id]['actual_posted'] = True
+                    return  # Success, no need for further retries
+                
+                else:
+                    print(f"⏳ No actual value for {event_name} at T+{offset_minutes}, will retry..." if offset_minutes < max(check_times) else f"❌ No actual value found for {event_name} after all retries")
+            
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"❌ Error in _schedule_actual_check: {e}")
+            print(f"❌ Error in _check_and_post_event for {event.get('event', 'Unknown')}: {e}")
             import traceback
             traceback.print_exc()
     
     @commands.command(name='testcalendar')
     @commands.has_permissions(administrator=True)
     async def test_post_calendar(self, ctx):
-        """Command để test đăng Economic Calendar ngay lập tức"""
+        """Command để test đăng Economic Calendar ngay lập tức (giống daily summary)"""
         await ctx.send("📊 Đang lấy dữ liệu Economic Calendar...")
         
         try:
@@ -2329,181 +2529,109 @@ class NewsCog(commands.Cog):
                 await ctx.send(f"❌ Không tìm thấy channel ID: {config['economic_calendar_channel']}")
                 return
             
-            # Fetch events - KHÔNG dùng alert window, lấy TẤT CẢ events tương lai
-            events = await self.fetch_economic_calendar(use_alert_window=False)
+            # Fetch events from now until 4:30 AM tomorrow
+            events = await self.fetch_economic_calendar(target_time=None)
             
             if not events:
                 await ctx.send("⚠️ **Không có sự kiện nào được tìm thấy!**\n\n" +
                               "Có thể do:\n" +
-                              "• Investing.com chưa cập nhật dữ liệu cho ngày hôm nay\n" +
-                              "• Tất cả events trong ngày đã kết thúc\n" +
+                              "• Investing.com chưa cập nhật dữ liệu\n" +
+                              "• Tất cả events đã kết thúc\n" +
                               "• Lỗi kết nối đến Investing.com\n\n" +
                               "Hãy thử lại sau ít phút! ⏰")
                 return
             
-            await ctx.send(f"✅ Đã lấy {len(events)} sự kiện. Đang tạo embed...")
+            await ctx.send(f"✅ Đã lấy {len(events)} sự kiện. Đang gửi daily summary...")
             
-            # Tạo embed giống hệt daily_calendar_summary
-            from datetime import datetime
-            import pytz
+            # Send daily summary (same as 7 AM automatic post)
+            await self.send_daily_summary(channel, events)
             
-            vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
-            now = datetime.now(vietnam_tz)
-            
-            embed = discord.Embed(
-                title="📅 Economic Calendar - Lịch Kinh Tế Sắp Tới",
-                description=f"Các sự kiện kinh tế quan trọng từ **{now.strftime('%H:%M')}** trở đi (UTC+7)",
-                color=0x3498DB,
-                timestamp=now
-            )
-            
-            # Phân loại theo impact
-            high_impact = [e for e in events if e['impact'] == 'High']
-            medium_impact = [e for e in events if e['impact'] == 'Medium']
-            low_impact = [e for e in events if e['impact'] == 'Low']
-            
-            await ctx.send(f"📊 Impact breakdown: High={len(high_impact)}, Medium={len(medium_impact)}, Low={len(low_impact)}")
-            
-            # High Impact
-            if high_impact:
-                high_text = ""
-                for event in high_impact[:15]:
-                    time = event.get('time', 'TBA')
-                    name = event.get('event', 'Unknown')
-                    country = event.get('country', 'N/A')
-                    if len(name) > 60:
-                        name = name[:57] + "..."
-                    high_text += f"🔴 **{time}** - {name} ({country})\n"
-                
-                if len(high_text) > 1020:
-                    high_text = high_text[:1020] + "..."
-                
-                embed.add_field(
-                    name="🔴 High Impact Events",
-                    value=high_text if high_text else "Không có",
-                    inline=False
-                )
-            
-            # Medium Impact
-            if medium_impact:
-                medium_text = ""
-                for event in medium_impact[:15]:
-                    time = event.get('time', 'TBA')
-                    name = event.get('event', 'Unknown')
-                    country = event.get('country', 'N/A')
-                    if len(name) > 60:
-                        name = name[:57] + "..."
-                    medium_text += f"🟠 **{time}** - {name} ({country})\n"
-                
-                if len(medium_text) > 1020:
-                    medium_text = medium_text[:1020] + "..."
-                
-                embed.add_field(
-                    name="🟠 Medium Impact Events",
-                    value=medium_text if medium_text else "Không có",
-                    inline=False
-                )
-            
-            # Set author
-            embed.set_author(
-                name="Investing.com Economic Calendar",
-                icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
-            )
-            
-            # Footer
-            embed.set_footer(
-                text=f"📊 Tổng: {len(events)} sự kiện • Cập nhật lúc {now.strftime('%H:%M')} (UTC+7)",
-                icon_url="https://www.google.com/s2/favicons?domain=investing.com&sz=128"
-            )
-            
-            # Send to calendar channel
-            await channel.send(embed=embed)
-            await ctx.send(f"✅ Đã đăng calendar vào {channel.mention}!")
+            await ctx.send("✅ Đã gửi daily summary thành công!")
             
         except Exception as e:
-            await ctx.send(f"❌ Lỗi: {str(e)}")
+            await ctx.send(f"❌ Lỗi: {e}")
+            print(f"Error in testcalendar: {e}")
             import traceback
             traceback.print_exc()
     
     @commands.command(name='schedulenow')
     @commands.has_permissions(administrator=True)
     async def schedule_now(self, ctx):
-        """Command để trigger scheduler ngay lập tức (for testing)"""
+        """Command để trigger scheduler ngay lập tức (gửi daily summary + schedule events)"""
         await ctx.send("🗓️ Triggering Economic Calendar Scheduler...")
         
         try:
-            # Cancel all existing tasks
+            config = self.load_news_config(ctx.guild.id)
+            
+            if not config or not config.get('economic_calendar_channel'):
+                await ctx.send("❌ Chưa cấu hình Economic Calendar channel!")
+                return
+            
+            channel = self.bot.get_channel(config['economic_calendar_channel'])
+            if not channel:
+                await ctx.send(f"❌ Không tìm thấy channel!")
+                return
+            
+            # Cancel existing tasks
             for task in self.event_tasks:
                 if not task.done():
                     task.cancel()
             self.event_tasks.clear()
             self.scheduled_events.clear()
             
-            # Run scheduler logic
+            # Fetch events from now until 4:30 AM tomorrow
             VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
             now = datetime.now(VN_TZ)
             
-            # Fetch all events for today
-            events = await self.fetch_economic_calendar(use_alert_window=False)
+            events = await self.fetch_economic_calendar(target_time=None)
             
             if not events:
-                await ctx.send("⚠️ No events found for today")
+                await ctx.send("⚠️ No events found!")
                 return
             
-            await ctx.send(f"📊 Found {len(events)} events, scheduling tasks...")
+            await ctx.send(f"📊 Found {len(events)} events. Sending daily summary...")
             
-            scheduled_count = 0
+            # Send daily summary
+            await self.send_daily_summary(channel, events)
             
-            # Schedule tasks for each event
-            for event in events:
-                impact = event.get('impact', 'Low')
-                
-                if impact not in ['Medium', 'High']:
-                    continue
-                
+            # Schedule event checks
+            important_events = [e for e in events if e.get('impact') in ['Medium', 'High']]
+            
+            for event in important_events:
                 event_id = event.get('id')
                 event_time_str = event.get('time', '')
+                event_name = event.get('event', 'Unknown')
                 
-                if not event_time_str or event_time_str == 'All Day' or event_time_str == 'Tentative':
+                if not event_time_str or event_time_str in ('All Day', 'Tentative'):
                     continue
                 
                 try:
                     # Parse event time
-                    event_time = datetime.strptime(event_time_str, '%H:%M').replace(
-                        year=now.year, month=now.month, day=now.day, tzinfo=VN_TZ
-                    )
+                    if '/' in event_time_str:
+                        dt = datetime.strptime(event_time_str, '%d/%m %H:%M')
+                        event_time_naive = datetime(year=now.year, month=dt.month, day=dt.day, hour=dt.hour, minute=dt.minute)
+                    else:
+                        parsed = datetime.strptime(event_time_str, '%H:%M')
+                        event_time_naive = datetime(year=now.year, month=now.month, day=now.day, hour=parsed.hour, minute=parsed.minute)
                     
-                    # Initialize tracking
+                    event_time = VN_TZ.localize(event_time_naive)
+                    
+                    if event_time < now:
+                        event_time = event_time + timedelta(days=1)
+                    
                     self.scheduled_events[event_id] = {
-                        'pre_alert_posted': False,
                         'actual_posted': False,
                         'event': event
                     }
                     
-                    # Schedule pre-alert (5 minutes before)
-                    pre_alert_time = event_time - timedelta(minutes=5)
-                    if pre_alert_time > now:
-                        task = asyncio.create_task(
-                            self._schedule_pre_alert(event, pre_alert_time)
-                        )
-                        self.event_tasks.append(task)
-                        scheduled_count += 1
+                    task = asyncio.create_task(self._check_and_post_event(event, event_time))
+                    self.event_tasks.append(task)
                     
-                    # Schedule actual value checks
-                    for offset_minutes in [0, 5, 10]:
-                        check_time = event_time + timedelta(minutes=offset_minutes)
-                        if check_time > now:
-                            task = asyncio.create_task(
-                                self._schedule_actual_check(event, check_time, is_first=(offset_minutes == 0))
-                            )
-                            self.event_tasks.append(task)
-                            scheduled_count += 1
-                
                 except Exception as e:
-                    print(f"Error scheduling {event.get('event_name')}: {e}")
+                    print(f"❌ Error scheduling {event_name}: {e}")
                     continue
             
-            await ctx.send(f"✅ Scheduled {scheduled_count} tasks for {len([e for e in events if e.get('impact') in ['Medium', 'High']])} events!")
+            await ctx.send(f"✅ Scheduled {len(self.event_tasks)} event check tasks!")
             
         except Exception as e:
             await ctx.send(f"❌ Error: {str(e)}")
@@ -2513,3 +2641,4 @@ class NewsCog(commands.Cog):
 async def setup(bot):
     """Setup function để load cog"""
     await bot.add_cog(NewsCog(bot))
+

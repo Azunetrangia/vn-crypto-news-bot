@@ -1,218 +1,83 @@
-# Economic Calendar Dynamic Scheduler
+# Economic Calendar Scheduler (Hybrid design)
 
 ## Overview
 
-Hệ thống scheduler mới thay thế polling approach cũ (check mỗi 5 phút) bằng **dynamic scheduled tasks** - schedule chính xác từng event để post vào đúng thời gian.
+This document describes the current economic calendar behavior implemented in `cogs/news_cog.py`.
 
-## Architecture
+Key behaviour summary:
+- Daily summary: sent at 07:00 UTC+7 covering events from 07:00 (today) through 04:30 next day.
+- Per-event checks: targeted re-checks at T+0, T+2, T+5 minutes with a retry policy (see details).
+- No pre-alerts or backfill: the system intentionally avoids pre-event alerts; instead a daily summary + targeted checks provide concise coverage.
+- Filter: only Medium and High impact events are scheduled/checked.
 
-### 1. Main Scheduler Task (`economic_calendar_scheduler`)
+## Scheduler behavior
 
-- **Chạy**: Mỗi ngày lúc **00:00 UTC+7** (midnight Vietnam time)
-- **Nhiệm vụ**:
-  1. Reset tracking và cancel tất cả scheduled tasks cũ
-  2. Fetch tất cả economic events trong ngày từ Investing.com
-  3. Tạo dynamic tasks cho mỗi event (chỉ Medium/High impact)
-  4. Schedule pre-alert và actual value checks
+### Main daily flow (`economic_calendar_scheduler`)
 
-### 2. Pre-Alert System
+- Runs once per day at **07:00 UTC+7**.
+- On run it:
+  1. Cancels any remaining scheduled tasks and clears tracking state.
+  2. Fetches events covering now → 04:30 next day (Investing.com scrape).
+  3. Sends a compact daily summary embed to the configured channel(s).
+  4. Schedules per-event check tasks for each relevant event.
 
-- **Thời điểm**: Event time - 5 minutes
-- **Nội dung**: Post thông báo sắp diễn ra với status ⏰ **Sắp diễn ra**
-- **Ví dụ**: Event BoE Interest Rate lúc 19:00 → Pre-alert lúc 18:55
+### Daily summary
 
-### 3. Actual Value Check System
+- Sent at 07:00 UTC+7.
+- Groups events into time blocks and shows counts/impact breakdown.
+- Purpose: give users a clean overview of today's events so they can plan.
 
-Mỗi event có **3 lần check** actual value:
+### Per-event checks (no pre-alert)
 
-1. **T+0** (Đúng giờ event): Check ngay khi event xảy ra
-2. **T+5** (5 phút sau): Retry nếu actual value chưa có
-3. **T+10** (10 phút sau): Retry lần cuối
+- For each High/Medium event the scheduler creates tasks to run at offsets relative to the event time:
+  - T+0 (at event time): run for all scheduled events.
+  - T+2 (2 minutes after): run for Medium and High events.
+  - T+5 (5 minutes after): run for High events only.
+- Each check will re-fetch the event details within a narrow window (±5 minutes) and post the actual value only if available.
+- Once an event's actual value has been posted, subsequent checks are skipped via `self.scheduled_events[event_id]['actual_posted']`.
 
-**Chỉ post khi actual value tồn tại** (không phải "N/A")
+## Data structures
 
-### 4. Status Indicators
-
-- ⏰ **Sắp diễn ra**: Pre-alert (5 minutes trước)
-- ✅ **Đã công bố**: Actual value có sẵn
-- ⏳ **Pending**: Actual value chưa có (hiển thị trong embeds nhưng không post riêng)
-
-## Data Structures
-
-### `self.scheduled_events`
-
-Dictionary tracking trạng thái của mỗi event:
-
-```python
-{
-    'event_id_123': {
-        'pre_alert_posted': False,  # Đã post pre-alert chưa?
-        'actual_posted': False,     # Đã post actual value chưa?
-        'event': {...}               # Event data
-    }
-}
-```
-
-### `self.event_tasks`
-
-List các asyncio tasks đang chạy:
-
-```python
-[
-    <Task _schedule_pre_alert(event1, 18:55)>,
-    <Task _schedule_actual_check(event1, 19:00)>,
-    <Task _schedule_actual_check(event1, 19:05)>,
-    ...
-]
-```
-
-## Methods
-
-### `economic_calendar_scheduler()`
-
-Main loop chạy mỗi 24 giờ:
-
-1. Cancel tất cả tasks cũ
-2. Reset tracking
-3. Fetch events
-4. Schedule tasks mới
-
-### `_schedule_pre_alert(event, pre_alert_time)`
-
-- Wait đến `pre_alert_time`
-- Check xem đã post chưa (tránh duplicate)
-- Post pre-alert vào tất cả guilds có config
-- Mark `pre_alert_posted = True`
-
-### `_schedule_actual_check(event, check_time, is_first)`
-
-- Wait đến `check_time`
-- Check xem đã post actual chưa
-- Re-fetch event để lấy actual value mới nhất
-- Nếu actual tồn tại → Post và mark `actual_posted = True`
-- Nếu không có → Skip (sẽ retry ở lần check tiếp theo)
+- `self.scheduled_events`: dict mapping stable event ids → state (e.g. `{'actual_posted': False, 'event': {...}}`).
+- `self.event_tasks`: list of asyncio Task objects that can be cancelled when the scheduler resets.
 
 ## Commands
 
 ### `!schedulenow`
+- Admin only. Triggers the same flow as the daily scheduler immediately (fetch → summary → schedule checks).
 
-**Admin only** - Trigger scheduler ngay lập tức (for testing)
+### `!testcalendar`
+- Admin only. Fetches events and shows the daily summary without scheduling background tasks.
 
+## Timezone
+
+- All displayed times use **UTC+7** (Asia/Ho_Chi_Minh). Investing.com timestamps are parsed and localized accordingly.
+
+## Retry policy and filters
+
+- Retry offsets: [0, 2, 5] minutes.
+- Posting policy:
+  - T+0: attempt posting for all events.
+  - T+2: attempt for Medium & High.
+  - T+5: attempt for High only.
+
+## Advantages of this hybrid approach
+
+- Simpler than pre-alert/backfill flows.
+- Users get one clear daily summary and reliable per-event checks.
+- Less noisy (no pre-event chimes) while still catching actual releases soon after they occur.
+
+## Testing
+
+1. Trigger scheduler now:
 ```
 !schedulenow
 ```
 
-**Output**:
-```
-🗓️ Triggering Economic Calendar Scheduler...
-📊 Found 60 events, scheduling tasks...
-✅ Scheduled 180 tasks for 15 events!
-```
+2. Check logs for summary + scheduled checks messages.
 
-### `!testcalendar`
+## Code references
 
-**Admin only** - Show full calendar cho ngày hôm nay (không schedule)
+- Scheduler & summary: `cogs/news_cog.py` (search for `economic_calendar_scheduler`, `send_daily_summary`, `_check_and_post_event`)
 
-```
-!testcalendar
-```
 
-## Example Flow
-
-### Event: BoE Interest Rate Decision at 19:00
-
-1. **00:00** - Scheduler fetch event, tạo tasks:
-   - Pre-alert task: 18:55
-   - Actual check tasks: 19:00, 19:05, 19:10
-
-2. **18:55** - Pre-alert task execute:
-   - Post "⏰ Sắp diễn ra - BoE Interest Rate"
-   - Mark `pre_alert_posted = True`
-
-3. **19:00** - First actual check:
-   - Fetch updated event
-   - Actual = "N/A" → Skip
-   - Print "⏳ No actual value yet, will retry"
-
-4. **19:05** - Second actual check:
-   - Fetch updated event
-   - Actual = "5.25%" → Post!
-   - Mark `actual_posted = True`
-   - Color-code vs previous value
-
-5. **19:10** - Third check:
-   - `actual_posted = True` → Skip (đã post rồi)
-
-## Impact Filtering
-
-Chỉ schedule và post **Medium** và **High** impact events.
-
-**Low** impact events bị skip hoàn toàn.
-
-## Timezone
-
-All times sử dụng **UTC+7** (Asia/Ho_Chi_Minh)
-
-Investing.com data ở UTC-5 → convert sang UTC+7 khi parse.
-
-## Tracking & Duplicate Prevention
-
-- `scheduled_events` dictionary ngăn post duplicate
-- Reset mỗi ngày lúc 00:00
-- Check trước khi post:
-  - Pre-alert: Check `pre_alert_posted`
-  - Actual: Check `actual_posted`
-
-## Error Handling
-
-- Try/catch trong mỗi scheduled task
-- Task cancel an toàn khi scheduler reset
-- Print detailed logs cho debugging
-- Traceback cho mọi exceptions
-
-## Advantages vs Old Polling System
-
-| Feature | Old (Polling) | New (Scheduled) |
-|---------|---------------|-----------------|
-| **Timing** | 0-5 min delay | Exact time |
-| **CPU Usage** | Constant checking | Only at event time |
-| **Accuracy** | ~5 min window | ±1 second |
-| **Scalability** | Poor (check all) | Good (per-event) |
-| **Complexity** | Simple | Moderate |
-
-## Testing
-
-1. **Start scheduler immediately**:
-   ```
-   !schedulenow
-   ```
-
-2. **Check logs**:
-   ```bash
-   tail -f bot.log | grep -i "schedule\|alert\|actual"
-   ```
-
-3. **Expected output**:
-   ```
-   🗓️ Economic Calendar Scheduler starting at 2025-01-06 20:43:51
-   📊 Fetched 60 events for scheduling
-     ⏰ Scheduled pre-alert for S&P Global US Services PMI at 16:35
-     📊 Scheduled actual check for S&P Global US Services PMI at 16:40
-     ...
-   ✅ Scheduled 180 tasks for today's events
-   ```
-
-## Future Improvements
-
-- [ ] Add retry với exponential backoff
-- [ ] Webhook notifications cho admins khi event post
-- [ ] Dashboard tracking event post success rate
-- [ ] Custom impact filters per guild
-- [ ] Event reminder system (15/30 min trước)
-
-## Code References
-
-- **Scheduler Task**: `cogs/news_cog.py` lines 2130-2224
-- **Pre-Alert**: `cogs/news_cog.py` lines 2238-2272
-- **Actual Check**: `cogs/news_cog.py` lines 2274-2333
-- **Command**: `cogs/news_cog.py` lines 2460-2544
