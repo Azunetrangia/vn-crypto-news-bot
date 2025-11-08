@@ -4,6 +4,20 @@
 - Process ID: Kiểm tra bằng `ps aux | grep main_bot.py`
 - Log file: `/home/azune/Documents/coding/discord-bot/bot_console.log`
 
+## ⚙️ Cấu hình Test Mode
+
+Để test Economic Calendar dễ dàng hơn, bạn có thể mở rộng pre-alert window bằng cách sửa file `.env`:
+
+```bash
+# Mặc định: 30 phút (production)
+ECONOMIC_PREALERT_MINUTES=30
+
+# Test mode: 24 giờ (1440 phút) - bot sẽ gửi pre-alert cho tất cả events trong 24h tới
+ECONOMIC_PREALERT_MINUTES=1440
+```
+
+**Lưu ý:** Sau khi sửa `.env`, cần restart bot để áp dụng thay đổi.
+
 ## 📋 Các lệnh test trong Discord
 
 ### 1. Test calendar fetch (không post lên channel)

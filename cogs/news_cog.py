@@ -873,6 +873,10 @@ class NewsCog(commands.Cog):
         self.scheduled_events = {}  # {event_id: {'pre_alert_posted': bool, 'actual_posted': bool}}
         self.event_tasks = []  # List of scheduled asyncio tasks
         
+        # Load environment configuration for Economic Calendar
+        self.pre_alert_minutes = self._load_env_int('ECONOMIC_PREALERT_MINUTES', 30, min_val=1, max_val=1440)
+        print(f"⚙️ Economic Calendar config: pre-alert window = {self.pre_alert_minutes} minutes")
+        
         # Khởi động background tasks
         self.news_checker.start()
         # Tắt scheduler - chỉ dùng polling mỗi 3 phút
@@ -890,6 +894,21 @@ class NewsCog(commands.Cog):
         for task in self.event_tasks:
             if not task.done():
                 task.cancel()
+    
+    def _load_env_int(self, key, default, min_val=None, max_val=None):
+        """Load integer from environment with validation"""
+        try:
+            value = int(os.getenv(key, str(default)))
+            if min_val is not None and value < min_val:
+                print(f"⚠️ {key}={value} is below minimum {min_val}, using {min_val}")
+                return min_val
+            if max_val is not None and value > max_val:
+                print(f"⚠️ {key}={value} exceeds maximum {max_val}, using {max_val}")
+                return max_val
+            return value
+        except ValueError:
+            print(f"⚠️ Invalid {key} in .env, using default {default}")
+            return default
         
     def load_news_config(self, guild_id=None):
         """Load cấu hình tin tức cho guild cụ thể"""
@@ -2056,16 +2075,16 @@ class NewsCog(commands.Cog):
                                     if event_dt < now_vn:
                                         event_dt = event_dt + timedelta(days=1)
                                 
-                                # Check if within pre-alert window (30 phút trước event)
+                                # Check if within pre-alert window
                                 time_until_event = (event_dt - now_vn).total_seconds() / 60  # phút
                                 
                                 # Post pre-alert nếu:
                                 # - Event chưa diễn ra (time_until_event > 0)
-                                # - Trong vòng 30 phút tới (hoặc 24 giờ để test dễ hơn)
+                                # - Trong vòng configured pre-alert window (mặc định 30 phút, có thể chỉnh qua ENV)
                                 # - Chưa post pre-alert cho event này
                                 pre_alert_id = f"{event_id}_prealert"
-                                # Tăng window lên 24 giờ (1440 phút) để dễ test
-                                if 0 < time_until_event <= 1440 and pre_alert_id not in last_posts['economic_events']:
+                                # Sử dụng self.pre_alert_minutes từ env config
+                                if 0 < time_until_event <= self.pre_alert_minutes and pre_alert_id not in last_posts['economic_events']:
                                     should_post_prealert = True
                                 
                                 # Post actual nếu có actual value và chưa post

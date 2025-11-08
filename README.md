@@ -26,9 +26,10 @@ Bot Discord chuyên nghiệp tổng hợp tin tức kinh tế & crypto tự đ�
 - **Investing.com scraper**: Lấy dữ liệu lịch kinh tế và chuyển về UTC+7 để hiển thị.
 - **Timezone UTC+7**: Hiển thị giờ Việt Nam
 - **Behavior**: Bot sends a daily summary at 07:00 UTC+7 and continuously polls for upcoming events. It will:
-  - Post a pre-alert for events that fall within the configured pre-alert window (default: 30 minutes; may be adjusted for testing).
+  - Post a pre-alert for events that fall within the configured pre-alert window (default: 30 minutes; adjustable via `ECONOMIC_PREALERT_MINUTES` in `.env`).
   - Post the actual/result only when Investing.com provides a non-"N/A" actual value.
   - Filter events: only Medium and High impact events are considered.
+- **Configuration**: Set `ECONOMIC_PREALERT_MINUTES` in `.env` (1–1440 minutes). Example: `1440` for 24-hour test mode.
 - Test commands: `!testcalendar`, `!schedulenow` (Admin only)
 
 ## 🚀 Cài đặt
@@ -64,6 +65,12 @@ DISCORD_TOKEN=your_discord_bot_token_here
 # API Keys (Optional - nếu sử dụng tính năng tương ứng)
 SANTIMENT_API_KEY=your_santiment_api_key_here
 COINGECKO_API_KEY=your_coingecko_api_key_here
+
+# Economic Calendar Configuration
+# Pre-alert window: số phút trước event khi bot gửi thông báo pre-alert
+# Mặc định: 30 | Min: 1 | Max: 1440 (24 giờ)
+# Ví dụ: set 1440 cho test mode (bot sẽ gửi pre-alert cho events trong 24h tới)
+ECONOMIC_PREALERT_MINUTES=30
 
 # Google Translate API (Free tier từ deep-translator)
 # Không cần API key - sử dụng deep-translator package
